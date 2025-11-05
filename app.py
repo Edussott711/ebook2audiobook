@@ -236,6 +236,20 @@ Tip: to add of silence (1.4 seconds) into your text just use "###" or "[pause]".
         if not check_python_version():
             sys.exit(1)
 
+        # Download models on first startup if enabled (Docker mode)
+        if args['script_mode'] == FULL_DOCKER:
+            download_on_startup = os.environ.get('DOWNLOAD_MODELS_ON_STARTUP', 'false').lower()
+            if download_on_startup in ['true', '1', 'yes']:
+                try:
+                    from download_models import main as download_models_main
+                    print("\n" + "=" * 60)
+                    print("Checking and downloading models if needed...")
+                    print("=" * 60 + "\n")
+                    download_models_main()
+                except Exception as e:
+                    print(f"Warning: Model download encountered an issue: {e}")
+                    print("The application will continue and download models on first use.")
+
         # Check if the port is already in use to prevent multiple launches
         if not args['headless'] and is_port_in_use(interface_port):
             error = f'Error: Port {interface_port} is already in use. The web interface may already be running.'

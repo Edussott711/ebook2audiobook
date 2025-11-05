@@ -15,7 +15,7 @@ services:
       args:
         #TORCH_VERSION: cuda118 # Available tags: [cuda121, cuda118, cuda128, rocm, xpu, cpu] # All CUDA version numbers should work, Ex: CUDA 11.6-> cuda116
         SKIP_XTTS_TEST: "true" # (Saves space by not baking xtts model into docker image)
-    # To update ebook2audiobook to the latest you may have to rebuild  
+    # To update ebook2audiobook to the latest you may have to rebuild
     entrypoint: ["python", "app.py", "--script_mode", "full_docker"]
     command: [] # <- Extra ebook2audiobook parameters can be added here
     tty: true
@@ -27,8 +27,12 @@ services:
         reservations:
           <<: *gpu-disabled # Use *gpu-enabled if you have an NVIDIA GPU.
         limits: {} # Keeps limits as an empty mapping to avoid errors. Uncomment and configure below.
+    environment:
+      # Set to "true" to download models on first startup and store them in the persistent volume
+      - DOWNLOAD_MODELS_ON_STARTUP=false
     volumes:
       - ./:/app  # Maps the local directory to the container.
+      - ebook2audiobook_models:/app/models  # Persistent volume for TTS models
 
 # Common Issues: ----
 # --> `python: can't open file '/home/user/app/app.py': [Errno 2] No such file or directory`
@@ -38,3 +42,8 @@ services:
 # After: nothing needed  or just -> `docker run athomasson2/ebook2audiobook`
 # Extra arguments after app.py can still be added to the -> command: [] 
 # Example adding extra arguments -> command: ["--share"] or -> command: ["--help"]
+
+# Named volumes for persistent storage
+volumes:
+  ebook2audiobook_models:
+    driver: local
