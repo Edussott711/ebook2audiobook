@@ -87,7 +87,7 @@ https://github.com/user-attachments/assets/81c4baad-117e-4db5-ac86-efc2b7fea921
 - [Fine Tuned TTS models](#fine-tuned-tts-models)
   - [Collection of Fine-Tuned TTS Models](#fine-tuned-tts-collection)
   - [Train XTTSv2](#fine-tune-your-own-xttsv2-model)
-- [Docker](#docker-gpu-options) 
+- [Docker](#docker-gpu-options)
   - [GPU options](#docker-gpu-options)
   - [Docker Run](#running-the-pre-built-docker-container)
   - [Docker Build](#building-the-docker-container)
@@ -95,6 +95,8 @@ https://github.com/user-attachments/assets/81c4baad-117e-4db5-ac86-efc2b7fea921
   - [Docker headless guide](#docker-headless-guide)
   - [Docker container file locations](#docker-container-file-locations)
   - [Common Docker issues](#common-docker-issues)
+- [Checkpoint & Resume Feature](#checkpoint--resume-feature)
+- [Custom Docker Input/Output Folders](#custom-docker-inputoutput-folders)
 - [Supported eBook Formats](#supported-ebook-formats)
 - [Output Formats](#output-formats)
 - [Updating to Latest Version](#updating-to-latest-version)
@@ -110,6 +112,8 @@ https://github.com/user-attachments/assets/81c4baad-117e-4db5-ac86-efc2b7fea921
 - 🗣️ Optional voice cloning with your own voice file.
 - 🌍 Supports +1110 languages (English by default). [List of Supported languages](https://dl.fbaipublicfiles.com/mms/tts/all-tts-languages.html)
 - 🖥️ Designed to run on 4GB RAM.
+- 💾 **Checkpoint & Resume** - Automatically saves progress and allows resuming interrupted conversions.
+- 🔄 **Stable Conversions** - Conversions continue independently even if the web interface disconnects.
 
 
 ## Supported Languages
@@ -456,6 +460,73 @@ docker run --pull always --rm --gpus all -e HF_HUB_DISABLE_PROGRESS_BARS=1 -e HF
     -p 7860:7860 athomasson2/ebook2audiobook
 ```
 
+
+## Checkpoint & Resume Feature
+
+The ebook2audiobook converter now includes an **automatic checkpoint and resume system** that allows you to:
+
+- 💾 **Stop conversions at any time** and resume later from where you left off
+- 🔄 **Recover from crashes or interruptions** automatically
+- ⏱️ **Save time** by not restarting long conversions from scratch
+
+### How to Use Sessions
+
+To use the checkpoint feature, simply add the `--session` parameter with a unique identifier:
+
+```bash
+# Start or resume a conversion with a session ID
+./ebook2audiobook.sh --headless --ebook "my_book.epub" --language en --session my-book-session
+
+# If interrupted, run the same command again to resume
+./ebook2audiobook.sh --headless --ebook "my_book.epub" --language en --session my-book-session
+```
+
+The system automatically saves progress after each chapter and can resume from the last successful checkpoint.
+
+📖 **For detailed information**, see [CHECKPOINT_RESUME.md](CHECKPOINT_RESUME.md)
+
+📦 **For Docker-specific checkpoint usage**, see [CHECKPOINT_DOCKER.md](CHECKPOINT_DOCKER.md)
+
+---
+
+## Custom Docker Input/Output Folders
+
+For users who prefer using `/input` and `/output` folders instead of the default structure, we now provide a custom Docker Compose configuration.
+
+### Quick Start
+
+```bash
+# Create folder structure
+mkdir -p input output tmp models voices
+
+# Place your ebook in the input folder
+cp my_book.epub input/
+
+# Start with custom configuration
+docker-compose -f docker-compose.custom.yml up
+```
+
+This setup provides:
+- 📂 Organized folder structure with dedicated input/output directories
+- ♻️ Checkpoint support with resume capability
+- 🎯 Easy file management and audiobook retrieval
+
+📖 **For complete setup instructions**, see [DOCKER_INPUT_OUTPUT.md](DOCKER_INPUT_OUTPUT.md)
+
+---
+
+## Stable Web Interface Conversions
+
+**New in recent updates**: The conversion process now runs independently of the Gradio web interface connection. This means:
+
+- ✅ Conversions continue even if you close your browser
+- ✅ Network interruptions won't stop your audiobook generation
+- ✅ You can safely refresh the web interface without losing progress
+
+> [!IMPORTANT]
+> **If the script is stopped and run again, you need to refresh your Gradio GUI interface** to let the web page reconnect to the new connection socket.
+
+---
 
 ## Fine Tuned TTS models
 #### Fine Tune your own XTTSv2 model
