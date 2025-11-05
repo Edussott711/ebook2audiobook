@@ -37,6 +37,7 @@ from starlette.requests import ClientDisconnect
 from lib import *
 from lib.classes.voice_extractor import VoiceExtractor
 from lib.classes.tts_manager import TTSManager
+from lib.checkpoint_manager import CheckpointManager
 #from lib.classes.redirect_console import RedirectConsole
 #from lib.classes.argos_translator import ArgosTranslator
 
@@ -1999,7 +2000,7 @@ def convert_ebook(args, ctx=None):
             session['output_split'] = args['output_split']    
             session['output_split_hours'] = args['output_split_hours'] if args['output_split_hours'] is not None else default_output_split_hours
 
-            info_session = f"\n*********** Session: {id} **************\nStore it in case of interruption, crash, reuse of custom model or custom voice,\nyou can resume the conversion with --session option"
+            info_session = f"\n*********** Session: {id} **************\nStore it in case of interruption, crash, reuse of custom model or custom voice,\nyou can resume the conversion with --session {id}\n\n💾 Checkpoint System Active:\n  - Progress is automatically saved at key stages\n  - If interrupted, simply restart with the same session ID to resume\n  - Use --force_restart to ignore checkpoints and start fresh"
 
             if not is_gui_process:
                 session['voice_dir'] = os.path.join(voices_dir, '__sessions', f"voice-{session['id']}", session['language'])
@@ -2048,8 +2049,29 @@ def convert_ebook(args, ctx=None):
                         os.rename(old_session_dir, session['session_dir'])
                     session['process_dir'] = os.path.join(session['session_dir'], f"{hashlib.md5(session['ebook'].encode()).hexdigest()}")
                     session['chapters_dir'] = os.path.join(session['process_dir'], "chapters")
-                    session['chapters_dir_sentences'] = os.path.join(session['chapters_dir'], 'sentences')       
+                    session['chapters_dir_sentences'] = os.path.join(session['chapters_dir'], 'sentences')
                     if prepare_dirs(args['ebook'], session):
+                        # Initialize checkpoint manager
+                        checkpoint_mgr = CheckpointManager(session)
+
+                        # Handle force restart - delete checkpoint if requested
+                        if args.get('force_restart', False):
+                            checkpoint_mgr.delete_checkpoint()
+                            checkpoint_info = None
+                            print("\n✓ Force restart requested - starting from beginning\n")
+                        else:
+                            # Check for existing checkpoint
+                            checkpoint_info = checkpoint_mgr.get_checkpoint_info()
+
+                        if checkpoint_info:
+                            checkpoint_stage = checkpoint_info.get('stage', 'unknown')
+                            checkpoint_time = checkpoint_info.get('timestamp', 'unknown')
+                            resume_msg = f"\n{'='*60}\n✓ Found existing checkpoint!\n  Stage: {checkpoint_stage}\n  Time: {checkpoint_time}\n  Resuming from last checkpoint...\n{'='*60}\n"
+                            print(resume_msg)
+                            if is_gui_process:
+                                show_alert({"type": "info", "msg": f"Resuming from checkpoint: {checkpoint_stage}"})
+                            checkpoint_mgr.restore_from_checkpoint()
+
                         session['filename_noext'] = os.path.splitext(os.path.basename(session['ebook']))[0]
                         msg = ''
                         msg_extra = ''
@@ -2088,7 +2110,12 @@ def convert_ebook(args, ctx=None):
                             show_alert({"type": "warning", "msg": msg})
                         print(msg)
                         session['epub_path'] = os.path.join(session['process_dir'], '__' + session['filename_noext'] + '.epub')
-                        if convert2epub(id):
+
+                        # Skip EPUB conversion if checkpoint exists and epub file is present
+                        skip_epub_conversion = checkpoint_info and os.path.exists(session['epub_path'])
+                        if skip_epub_conversion or convert2epub(id):
+                            if not skip_epub_conversion:
+                                checkpoint_mgr.save_checkpoint('epub_converted')
                             epubBook = epub.read_epub(session['epub_path'], {'ignore_ncx': True})       
                             metadata = dict(session['metadata'])
                             for key, value in metadata.items():
@@ -2112,10 +2139,15 @@ def convert_ebook(args, ctx=None):
                                 print(error)
                             session['cover'] = get_cover(epubBook, session)
                             if session['cover']:
-                                session['toc'], session['chapters'] = get_chapters(epubBook, session)
+                                # Skip chapter extraction if checkpoint exists and chapters are loaded
+                                skip_chapter_extraction = checkpoint_info and checkpoint_info.get('stage') in ['chapters_extracted', 'audio_converted', 'chapters_combined', 'completed']
+                                if not skip_chapter_extraction or session.get('chapters') is None:
+                                    session['toc'], session['chapters'] = get_chapters(epubBook, session)
+                                    checkpoint_mgr.save_checkpoint('chapters_extracted')
                                 session['final_name'] = get_sanitized(session['metadata']['title'] + '.' + session['output_format'])
                                 if session['chapters'] is not None:
                                     if convert_chapters2audio(id):
+                                        checkpoint_mgr.save_checkpoint('audio_converted')
                                         msg = 'Conversion successful. Combining sentences and chapters...'
                                         show_alert({"type": "info", "msg": msg})
                                         exported_files = combine_audio_chapters(id)               
@@ -2147,6 +2179,9 @@ def convert_ebook(args, ctx=None):
                                                     shutil.rmtree(session['session_dir'], ignore_errors=True)
                                             progress_status = f'Audiobook(s) {", ".join(os.path.basename(f) for f in exported_files)} created!'
                                             session['audiobook'] = exported_files[-1]
+                                            checkpoint_mgr.save_checkpoint('completed')
+                                            # Delete checkpoint on successful completion
+                                            checkpoint_mgr.delete_checkpoint()
                                             print(info_session)
                                             return progress_status, True
                                         else:
