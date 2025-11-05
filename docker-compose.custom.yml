@@ -1,0 +1,42 @@
+x-gpu-enabled: &gpu-enabled
+  devices:
+    - driver: nvidia
+      count: all
+      capabilities:
+        - gpu # Enables GPU access for the container.
+
+x-gpu-disabled: &gpu-disabled
+  devices: [] # Disables GPU access (default for systems without an NVIDIA GPU).
+
+services:
+  ebook2audiobook:
+    build:
+      context: .
+      args:
+        #TORCH_VERSION: cuda118 # Available tags: [cuda121, cuda118, cuda128, rocm, xpu, cpu]
+        SKIP_XTTS_TEST: "true" # (Saves space by not baking xtts model into docker image)
+    entrypoint: ["python", "app.py", "--script_mode", "full_docker"]
+    command: [] # <- Extra ebook2audiobook parameters can be added here
+    tty: true
+    stdin_open: true
+    ports:
+      - 7860:7860 # Maps container's port 7860 to the host's port 7860.
+    deploy:
+      resources:
+        reservations:
+          <<: *gpu-disabled # Use *gpu-enabled if you have an NVIDIA GPU.
+        limits: {}
+    volumes:
+      # Configuration personnalisée avec /input et /output
+      - ./input:/app/ebooks                # Vos ebooks sources
+      - ./output:/app/audiobooks/cli       # Vos audiobooks générés
+      - ./tmp:/app/tmp                     # Checkpoints et fichiers temporaires
+      - ./models:/app/models               # Modèles TTS (pour réutilisation)
+      - ./voices:/app/voices               # Vos voix personnalisées
+
+# Usage:
+# docker-compose -f docker-compose.custom.yml run --rm ebook2audiobook \
+#   --headless \
+#   --ebook "ebooks/livre.epub" \
+#   --language fr \
+#   --session ma-session

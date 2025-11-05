@@ -163,12 +163,12 @@ Tip: to add of silence (1.4 seconds) into your text just use "###" or "[pause]".
         formatter_class=argparse.RawTextHelpFormatter
     )
     options = [
-        '--script_mode', '--session', '--share', '--headless', 
-        '--ebook', '--ebooks_dir', '--language', '--voice', '--device', '--tts_engine', 
+        '--script_mode', '--session', '--share', '--headless',
+        '--ebook', '--ebooks_dir', '--language', '--voice', '--device', '--tts_engine',
         '--custom_model', '--fine_tuned', '--output_format',
         '--temperature', '--length_penalty', '--num_beams', '--repetition_penalty', '--top_k', '--top_p', '--speed', '--enable_text_splitting',
         '--text_temp', '--waveform_temp',
-        '--output_dir', '--version', '--workflow', '--help'
+        '--output_dir', '--force_restart', '--version', '--workflow', '--help'
     ]
     tts_engine_list_keys = [k for k in TTS_ENGINES.keys()]
     tts_engine_list_values = [k for k in TTS_ENGINES.values()]
@@ -218,8 +218,9 @@ Tip: to add of silence (1.4 seconds) into your text just use "###" or "[pause]".
     headless_optional_group.add_argument(options[22], type=float, default=None, help=f"""(bark only, optional) Waveform Temperature for the model. 
     Default to {default_engine_settings[TTS_ENGINES['BARK']]['waveform_temp']}. Higher temperatures lead to more creative outputs.""")
     headless_optional_group.add_argument(options[23], type=str, help=f'''(Optional) Path to the output directory. Default is set in ./lib/conf.py''')
-    headless_optional_group.add_argument(options[24], action='version', version=f'ebook2audiobook version {prog_version}', help='''Show the version of the script and exit''')
-    headless_optional_group.add_argument(options[25], action='store_true', help=argparse.SUPPRESS)
+    headless_optional_group.add_argument(options[24], action='store_true', help='''(Optional) Force restart from beginning, ignoring any existing checkpoint.''')
+    headless_optional_group.add_argument(options[25], action='version', version=f'ebook2audiobook version {prog_version}', help='''Show the version of the script and exit''')
+    headless_optional_group.add_argument(options[26], action='store_true', help=argparse.SUPPRESS)
     
     for arg in sys.argv:
         if arg.startswith('--') and arg not in options:
