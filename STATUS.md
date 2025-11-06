@@ -154,15 +154,15 @@ Refactoriser le fichier monolithique `lib/functions.py` (4162 lignes, 8 responsa
 
 **Status :** ✅ 100% | Tests : ❌ 0% | Docs : ✅ Complètes
 
-#### text/processor.py ⚠️
-- `filter_chapter()` → **PLACEHOLDER** (référence lib.functions)
+#### text/processor.py ✅
+- `filter_chapter()` → Pipeline complet HTML→TTS (parsing, tables, dates, normalization)
 
-**Status :** ⚠️ Placeholder | Tests : ❌ 0% | Docs : ✅ Complètes
+**Status :** ✅ 100% | Tests : ❌ 0% | Docs : ✅ Complètes
 
-#### text/sentence_splitter.py ❌
-- `get_sentences()` → **NON CRÉÉ**
+#### text/sentence_splitter.py ✅
+- `get_sentences()` → Segmentation multi-langue avec tokenizers (jieba, sudachi, soynlp, pythainlp)
 
-**Status :** ❌ 0% | Tests : ❌ 0% | Docs : ❌ 0%
+**Status :** ✅ 100% | Tests : ❌ 0% | Docs : ✅ Complètes
 
 #### text/date_converter.py ✅
 - `get_date_entities()` → Extraction entités dates (Stanza NLP)
@@ -219,7 +219,7 @@ Refactoriser le fichier monolithique `lib/functions.py` (4162 lignes, 8 responsa
 
 ### HAUTE PRIORITÉ (Fonctions critiques)
 
-#### 1. text/processor.py - filter_chapter() ⚠️
+#### 1. text/processor.py - filter_chapter() ✅
 **Ligne dans functions.py :** 567-803 (237 lignes)
 
 **Complexité :** 🔴 TRÈS ÉLEVÉE
@@ -241,17 +241,22 @@ Refactoriser le fichier monolithique `lib/functions.py` (4162 lignes, 8 responsa
 - set_formatted_number, year2words, clock2words, math2words
 - roman2number, get_date_entities
 
-**Plan d'extraction :**
-1. Extraire les fonctions imbriquées (tuple_row, process_table)
-2. Créer des méthodes helper pour chaque transformation
-3. Séparer parsing HTML et traitement texte
-4. Créer TextProcessor class
+**Extraction réalisée :**
+✅ Fonction complète extraite dans lib/text/processor.py (397 lignes avec docs)
+✅ Fonction interne tuple_row() pour extraction récursive HTML
+✅ Pipeline complet: HTML → Parsing → Tables → Breaks → NLP → Normalization → Sentences
+✅ Filtrage types EPUB (frontmatter, backmatter, TOC, etc.)
+✅ Traitement tables: "Header: Value — Header: Value"
+✅ Optimisation breaks intelligente (merge phrases courtes)
+✅ Conversion NLP dates avec Stanza
+✅ Toutes les conversions intégrées (dates, heures, nombres, math, romans)
+✅ Documentation complète avec examples et pipeline détaillé
 
-**Status actuel :** ⚠️ PLACEHOLDER
+**Status actuel :** ✅ COMPLÉTÉ
 
 ---
 
-#### 2. text/sentence_splitter.py - get_sentences() ❌
+#### 2. text/sentence_splitter.py - get_sentences() ✅
 **Ligne dans functions.py :** 805-984 (180 lignes)
 
 **Complexité :** 🔴 TRÈS ÉLEVÉE
@@ -271,13 +276,20 @@ Refactoriser le fichier monolithique `lib/functions.py` (4162 lignes, 8 responsa
 - pythainlp.word_tokenize (thaï)
 - segment_ideogramms, join_ideogramms (fonctions internes)
 
-**Plan d'extraction :**
-1. Créer SentenceSplitter class
-2. Extraire tokenizers dans text/tokenizers/
-3. Créer pattern Strategy pour chaque langue
-4. Séparer logique idéogrammes vs alphabets
+**Extraction réalisée :**
+✅ Fonction complète extraite dans lib/text/sentence_splitter.py (290 lignes avec docs)
+✅ 3 fonctions internes préservées:
+  - split_inclusive() - Split avec délimiteur inclus
+  - segment_ideogramms() - Tokenisation langues asiatiques
+  - join_ideogramms() - Buffer management pour idéogrammes
+✅ Pipeline multi-étapes: SML → Hard punct → Soft punct → Buffer → Tokenize
+✅ Support complet langues idéogrammatiques (chinois, japonais, coréen, thaï, lao, birman, khmer)
+✅ Imports conditionnels pour tokenizers (jieba, sudachi, soynlp, pythainlp)
+✅ Gestion buffer max_chars avec backtracking intelligent
+✅ Préservation tokens SML (break, pause)
+✅ Documentation complète avec exemples multi-langues et algorithme détaillé
 
-**Status actuel :** ❌ NON CRÉÉ
+**Status actuel :** ✅ COMPLÉTÉ
 
 ---
 

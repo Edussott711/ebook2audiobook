@@ -7,6 +7,7 @@ from .normalizer import normalize_text, filter_sml
 from .number_converter import roman2number, number_to_words, set_formatted_number
 from .date_converter import get_date_entities, year2words, clock2words
 from .math_converter import math2words
+from .sentence_splitter import get_sentences
 from .utils import get_num2words_compat
 from .processor import filter_chapter
 
@@ -24,6 +25,8 @@ __all__ = [
     'clock2words',
     # Math converter
     'math2words',
+    # Sentence splitter
+    'get_sentences',
     # Utils
     'get_num2words_compat',
     # Processor
