@@ -3513,7 +3513,7 @@ def web_interface(args, ctx):
         def change_gr_read_data(data, state, req: gr.Request):
             try:
                 msg = 'Error while loading saved session. Please try to delete your cookies and refresh the page'
-                if data is None:
+                if data is None or not isinstance(data, dict) or 'id' not in data:
                     data = context.get_session(str(uuid.uuid4()))
 
                 # Check if this session existed before (to detect fresh server start after Docker restart)
