@@ -32,6 +32,8 @@ ARG TORCH_VERSION=""
 # Add parameter to control whether to skip the XTTS test
 ARG SKIP_XTTS_TEST="false"
 
+# Increase pip timeout for large package downloads (e.g., PyTorch wheels)
+ENV PIP_DEFAULT_TIMEOUT=300
 
 # Extract torch versions from requirements.txt or set to empty strings if not found
 RUN TORCH_VERSION_REQ=$(grep -E "^torch==" requirements.txt | cut -d'=' -f3 || echo "") && \
