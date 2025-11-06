@@ -1404,6 +1404,21 @@ def convert_chapters2audio(id):
         if session['cancellation_requested']:
             print('Cancel requested')
             return False
+
+        # Initialize checkpoint manager for per-chapter checkpoints
+        checkpoint_mgr = CheckpointManager(session)
+
+        # Load checkpoint info to resume from last completed chapter
+        checkpoint_info = checkpoint_mgr.get_checkpoint_info()
+        if checkpoint_info and checkpoint_info.get('stage') in ['audio_conversion_in_progress', 'audio_converted']:
+            checkpoint_mgr.restore_from_checkpoint()
+            msg = f"Resuming conversion from checkpoint - {len(session.get('converted_chapters', []))} chapters already completed"
+            print(msg)
+
+        # Initialize converted_chapters list if not exists
+        if 'converted_chapters' not in session:
+            session['converted_chapters'] = []
+
         tts_manager = TTSManager(session)
         if not tts_manager:
             error = f"TTS engine {session['tts_engine']} could not be loaded!\nPossible reason can be not enough VRAM/RAM memory.\nTry to lower max_tts_in_memory in ./lib/models.py"
@@ -1460,6 +1475,21 @@ def convert_chapters2audio(id):
             for x in range(0, total_chapters):
                 chapter_num = x + 1
                 chapter_audio_file = f'chapter_{chapter_num}.{default_audio_proc_format}'
+
+                # Skip chapters that were already successfully converted (from checkpoint)
+                if chapter_num in session.get('converted_chapters', []):
+                    chapter_file_path = os.path.join(session['chapters_dir'], chapter_audio_file)
+                    if os.path.exists(chapter_file_path):
+                        msg = f'✓ Skipping Block {chapter_num} - already converted (from checkpoint)'
+                        print(msg)
+                        # Update sentence_number and progress bar for skipped chapter
+                        sentences = session['chapters'][x]
+                        for sentence in sentences:
+                            if sentence.strip() not in TTS_SML.values():
+                                sentence_number += 1
+                            t.update(1)
+                        continue
+
                 sentences = session['chapters'][x]
                 sentences_count = sum(1 for row in sentences if row.strip() not in TTS_SML.values())
                 start = sentence_number
@@ -1499,6 +1529,12 @@ def convert_chapters2audio(id):
                     if combine_audio_sentences(chapter_audio_file, start, end, session):
                         msg = f'Combining block {chapter_num} to audio, sentence {start} to {end}'
                         print(msg)
+                        # Add this chapter to converted list and save checkpoint
+                        if chapter_num not in session['converted_chapters']:
+                            session['converted_chapters'].append(chapter_num)
+                        checkpoint_mgr.save_checkpoint('audio_conversion_in_progress',
+                                                      {'last_completed_chapter': chapter_num,
+                                                       'total_chapters': total_chapters})
                     else:
                         msg = 'combine_audio_sentences() failed!'
                         print(msg)
@@ -2143,7 +2179,7 @@ def convert_ebook(args, ctx=None):
                             session['cover'] = get_cover(epubBook, session)
                             if session['cover']:
                                 # Skip chapter extraction if checkpoint exists and chapters are loaded
-                                skip_chapter_extraction = checkpoint_info and checkpoint_info.get('stage') in ['chapters_extracted', 'audio_converted', 'chapters_combined', 'completed']
+                                skip_chapter_extraction = checkpoint_info and checkpoint_info.get('stage') in ['chapters_extracted', 'audio_conversion_in_progress', 'audio_converted', 'chapters_combined', 'completed']
                                 if not skip_chapter_extraction or session.get('chapters') is None:
                                     session['toc'], session['chapters'] = get_chapters(epubBook, session)
                                     checkpoint_mgr.save_checkpoint('chapters_extracted')
@@ -3479,16 +3515,27 @@ def web_interface(args, ctx):
                 msg = 'Error while loading saved session. Please try to delete your cookies and refresh the page'
                 if data is None:
                     data = context.get_session(str(uuid.uuid4()))
+
+                # Check if this session existed before (to detect fresh server start after Docker restart)
+                session_existed = data['id'] in context.sessions
                 session = context.get_session(data['id'])
+
                 # Check if conversion was in progress before restoring
                 was_converting = data.get('status') == 'converting'
+                is_reconnecting = req.session_hash in active_sessions
+
                 if data.get('tab_id') == session.get('tab_id') or len(active_sessions) == 0:
                     restore_session_from_data(data, session)
-                    # Only reset status if conversion was not in progress
-                    # This allows the process to continue and resync
-                    if not was_converting:
+                    # Reset status to None if:
+                    # 1. Conversion was not in progress, OR
+                    # 2. This is a fresh server start (session didn't exist before)
+                    #    which means Docker was restarted and no actual process is running
+                    # 3. This is a reconnection (page refresh) - allow it to proceed
+                    if not was_converting or not session_existed or is_reconnecting:
                         session['status'] = None
-                if not ctx_tracker.start_session(session['id']):
+
+                # Allow session start if it's a reconnection from the same browser OR if start_session succeeds
+                if not is_reconnecting and not ctx_tracker.start_session(session['id']):
                     error = "Your session is already active.<br>If it's not the case please close your browser and relaunch it."
                     return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
                 else:
@@ -4145,7 +4192,7 @@ def web_interface(args, ctx):
     try:
         all_ips = get_all_ip_addresses()
         msg = f'IPs available for connection:\n{all_ips}\nNote: 0.0.0.0 is not the IP to connect. Instead use an IP above to connect.'
-        show_alert({"type": "info", "msg": msg})
+        print(msg)
         os.environ['no_proxy'] = ' ,'.join(all_ips)
         app.queue(default_concurrency_limit=interface_concurrency_limit).launch(debug=bool(int(os.environ.get('GRADIO_DEBUG', '0'))),show_error=debug_mode, favicon_path='./favicon.ico', server_name=interface_host, server_port=interface_port, share=is_gui_shared, max_file_size=max_upload_size)
     except OSError as e:

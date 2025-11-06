@@ -94,6 +94,8 @@ class CheckpointManager:
                 checkpoint_data['chapters_sentences'] = [
                     len(chapter) for chapter in self.session['chapters']
                 ]
+                # Store list of successfully converted chapters
+                checkpoint_data['converted_chapters'] = self.session.get('converted_chapters', [])
 
             # Add any additional data
             if additional_data:
@@ -155,7 +157,8 @@ class CheckpointManager:
                 'num_beams', 'repetition_penalty', 'top_k', 'top_p', 'speed',
                 'enable_text_splitting', 'text_temp', 'waveform_temp',
                 'output_format', 'output_split', 'output_split_hours',
-                'fine_tuned', 'device', 'toc', 'cover', 'final_name', 'audiobook'
+                'fine_tuned', 'device', 'toc', 'cover', 'final_name', 'audiobook',
+                'converted_chapters'
             ]
 
             for field in restore_fields:
