@@ -78,7 +78,7 @@ class CheckpointManager:
                 "fine_tuned": self.session.get('fine_tuned'),
                 "device": self.session.get('device'),
                 "metadata": self._serialize_dict(self.session.get('metadata', {})),
-                "toc": self.session.get('toc'),
+                # Don't save 'toc' as it contains non-serializable Link objects from ebooklib
                 "cover": self.session.get('cover'),
                 "chapters_dir": self.session.get('chapters_dir'),
                 "chapters_dir_sentences": self.session.get('chapters_dir_sentences'),
@@ -150,14 +150,14 @@ class CheckpointManager:
             if not checkpoint_data:
                 return False
 
-            # Restore session fields
+            # Restore session fields (excluding 'toc' as it contains non-serializable objects)
             restore_fields = [
                 'epub_path', 'filename_noext', 'language', 'language_iso1',
                 'tts_engine', 'voice', 'custom_model', 'temperature', 'length_penalty',
                 'num_beams', 'repetition_penalty', 'top_k', 'top_p', 'speed',
                 'enable_text_splitting', 'text_temp', 'waveform_temp',
                 'output_format', 'output_split', 'output_split_hours',
-                'fine_tuned', 'device', 'toc', 'cover', 'final_name', 'audiobook',
+                'fine_tuned', 'device', 'cover', 'final_name', 'audiobook',
                 'converted_chapters'
             ]
 

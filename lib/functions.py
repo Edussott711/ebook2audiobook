@@ -3522,7 +3522,11 @@ def web_interface(args, ctx):
 
                 # Check if conversion was in progress before restoring
                 was_converting = data.get('status') == 'converting'
-                is_reconnecting = req.session_hash in active_sessions
+
+                # Count active socket connections for this session
+                # Session stores socket hashes as keys, so we check how many are still in active_sessions
+                active_socket_count = sum(1 for hash_key in active_sessions if hash_key in session.keys())
+                has_no_active_sockets = active_socket_count == 0
 
                 if data.get('tab_id') == session.get('tab_id') or len(active_sessions) == 0:
                     restore_session_from_data(data, session)
@@ -3530,12 +3534,12 @@ def web_interface(args, ctx):
                     # 1. Conversion was not in progress, OR
                     # 2. This is a fresh server start (session didn't exist before)
                     #    which means Docker was restarted and no actual process is running
-                    # 3. This is a reconnection (page refresh) - allow it to proceed
-                    if not was_converting or not session_existed or is_reconnecting:
+                    # 3. This is a reconnection (page refresh/reconnect) with no active sockets
+                    if not was_converting or not session_existed or has_no_active_sockets:
                         session['status'] = None
 
-                # Allow session start if it's a reconnection from the same browser OR if start_session succeeds
-                if not is_reconnecting and not ctx_tracker.start_session(session['id']):
+                # Allow session start if there are no active sockets (reconnection) OR if start_session succeeds
+                if not has_no_active_sockets and not ctx_tracker.start_session(session['id']):
                     error = "Your session is already active.<br>If it's not the case please close your browser and relaunch it."
                     return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
                 else:
