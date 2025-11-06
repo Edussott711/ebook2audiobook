@@ -1,0 +1,57 @@
+# Dépendances supplémentaires pour le mode distribué
+# Installer avec: pip install -r requirements-distributed.txt
+
+# ============================================================================
+# CELERY - Distributed task queue
+# ============================================================================
+celery[redis]==5.3.4
+# Framework de tâches distribuées avec support Redis
+
+# ============================================================================
+# REDIS - Message broker et result backend
+# ============================================================================
+redis==5.0.1
+# Client Python pour Redis
+
+# ============================================================================
+# MONITORING
+# ============================================================================
+flower==2.0.1
+# Dashboard web pour monitoring Celery
+
+prometheus-client==0.19.0
+# Métriques Prometheus pour monitoring avancé
+
+# ============================================================================
+# CLOUD STORAGE (optionnel)
+# ============================================================================
+boto3==1.34.10
+# SDK AWS pour S3 storage
+# Nécessaire seulement si SHARED_STORAGE_TYPE=s3
+
+# ============================================================================
+# UTILITAIRES
+# ============================================================================
+kombu==5.3.4
+# Librairie de messaging (dépendance de Celery)
+
+billiard==4.2.0
+# Pool de processus pour Celery
+
+vine==5.1.0
+# Promise/future pour Celery
+
+# ============================================================================
+# SÉCURITÉ
+# ============================================================================
+cryptography==41.0.7
+# Pour TLS/SSL avec Redis
+
+# ============================================================================
+# DÉVELOPPEMENT / TESTS (optionnel)
+# ============================================================================
+# pytest-celery==0.0.0
+# Tests unitaires pour tâches Celery
+
+# locust==2.20.0
+# Load testing pour benchmarking

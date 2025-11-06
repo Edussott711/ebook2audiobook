@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+  # Redis - Message broker et result backend
+  redis:
+    image: redis:7-alpine
+    container_name: ebook2audio-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    networks:
+      - ebook2audio-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Coordinator - Master node
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ebook2audio-coordinator
+    environment:
+      - DISTRIBUTED_MODE=true
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - SHARED_STORAGE_TYPE=${SHARED_STORAGE_TYPE:-nfs}
+      - SHARED_STORAGE_PATH=/mnt/shared
+      - NUM_WORKERS=${NUM_WORKERS:-2}
+    ports:
+      - "7860:7860"  # Gradio UI
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - shared_audio:/mnt/shared
+      - ./models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ebook2audio-net
+    command: >
+      sh -c "echo 'Waiting for workers...' &&
+             sleep 10 &&
+             python app.py --script_mode gradio"
+    restart: unless-stopped
+
+  # Worker - Processing nodes
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DISTRIBUTED_MODE=true
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - SHARED_STORAGE_TYPE=${SHARED_STORAGE_TYPE:-nfs}
+      - SHARED_STORAGE_PATH=/mnt/shared
+      - CUDA_VISIBLE_DEVICES=${WORKER_GPU_ID:-}
+      - WORKER_ID=${WORKER_ID:-worker}
+    volumes:
+      - shared_audio:/mnt/shared
+      - ./models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ebook2audio-net
+    deploy:
+      replicas: 2
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      celery -A lib.distributed.celery_app worker
+      --loglevel=info
+      --concurrency=1
+      --max-tasks-per-child=50
+      --hostname=worker_${WORKER_ID:-auto}@%h
+    restart: unless-stopped
+
+  # Flower - Monitoring dashboard
+  flower:
+    image: mher/flower:2.0
+    container_name: ebook2audio-flower
+    environment:
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - FLOWER_PORT=5555
+      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-admin}
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ebook2audio-net
+    restart: unless-stopped
+
+networks:
+  ebook2audio-net:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local
+  shared_audio:
+    driver: local
+    # Pour NFS, remplacer par:
+    # driver_opts:
+    #   type: nfs
+    #   o: addr=YOUR_NFS_SERVER,rw,nfsvers=4
+    #   device: ":/path/to/shared"
