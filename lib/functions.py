@@ -1404,6 +1404,21 @@ def convert_chapters2audio(id):
         if session['cancellation_requested']:
             print('Cancel requested')
             return False
+
+        # Initialize checkpoint manager for per-chapter checkpoints
+        checkpoint_mgr = CheckpointManager(session)
+
+        # Load checkpoint info to resume from last completed chapter
+        checkpoint_info = checkpoint_mgr.get_checkpoint_info()
+        if checkpoint_info and checkpoint_info.get('stage') in ['audio_conversion_in_progress', 'audio_converted']:
+            checkpoint_mgr.restore_from_checkpoint()
+            msg = f"Resuming conversion from checkpoint - {len(session.get('converted_chapters', []))} chapters already completed"
+            print(msg)
+
+        # Initialize converted_chapters list if not exists
+        if 'converted_chapters' not in session:
+            session['converted_chapters'] = []
+
         tts_manager = TTSManager(session)
         if not tts_manager:
             error = f"TTS engine {session['tts_engine']} could not be loaded!\nPossible reason can be not enough VRAM/RAM memory.\nTry to lower max_tts_in_memory in ./lib/models.py"
@@ -1460,6 +1475,21 @@ def convert_chapters2audio(id):
             for x in range(0, total_chapters):
                 chapter_num = x + 1
                 chapter_audio_file = f'chapter_{chapter_num}.{default_audio_proc_format}'
+
+                # Skip chapters that were already successfully converted (from checkpoint)
+                if chapter_num in session.get('converted_chapters', []):
+                    chapter_file_path = os.path.join(session['chapters_dir'], chapter_audio_file)
+                    if os.path.exists(chapter_file_path):
+                        msg = f'✓ Skipping Block {chapter_num} - already converted (from checkpoint)'
+                        print(msg)
+                        # Update sentence_number and progress bar for skipped chapter
+                        sentences = session['chapters'][x]
+                        for sentence in sentences:
+                            if sentence.strip() not in TTS_SML.values():
+                                sentence_number += 1
+                            t.update(1)
+                        continue
+
                 sentences = session['chapters'][x]
                 sentences_count = sum(1 for row in sentences if row.strip() not in TTS_SML.values())
                 start = sentence_number
@@ -1499,6 +1529,12 @@ def convert_chapters2audio(id):
                     if combine_audio_sentences(chapter_audio_file, start, end, session):
                         msg = f'Combining block {chapter_num} to audio, sentence {start} to {end}'
                         print(msg)
+                        # Add this chapter to converted list and save checkpoint
+                        if chapter_num not in session['converted_chapters']:
+                            session['converted_chapters'].append(chapter_num)
+                        checkpoint_mgr.save_checkpoint('audio_conversion_in_progress',
+                                                      {'last_completed_chapter': chapter_num,
+                                                       'total_chapters': total_chapters})
                     else:
                         msg = 'combine_audio_sentences() failed!'
                         print(msg)
@@ -2143,7 +2179,7 @@ def convert_ebook(args, ctx=None):
                             session['cover'] = get_cover(epubBook, session)
                             if session['cover']:
                                 # Skip chapter extraction if checkpoint exists and chapters are loaded
-                                skip_chapter_extraction = checkpoint_info and checkpoint_info.get('stage') in ['chapters_extracted', 'audio_converted', 'chapters_combined', 'completed']
+                                skip_chapter_extraction = checkpoint_info and checkpoint_info.get('stage') in ['chapters_extracted', 'audio_conversion_in_progress', 'audio_converted', 'chapters_combined', 'completed']
                                 if not skip_chapter_extraction or session.get('chapters') is None:
                                     session['toc'], session['chapters'] = get_chapters(epubBook, session)
                                     checkpoint_mgr.save_checkpoint('chapters_extracted')
