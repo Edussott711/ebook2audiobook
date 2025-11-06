@@ -3515,16 +3515,27 @@ def web_interface(args, ctx):
                 msg = 'Error while loading saved session. Please try to delete your cookies and refresh the page'
                 if data is None:
                     data = context.get_session(str(uuid.uuid4()))
+
+                # Check if this session existed before (to detect fresh server start after Docker restart)
+                session_existed = data['id'] in context.sessions
                 session = context.get_session(data['id'])
+
                 # Check if conversion was in progress before restoring
                 was_converting = data.get('status') == 'converting'
+                is_reconnecting = req.session_hash in active_sessions
+
                 if data.get('tab_id') == session.get('tab_id') or len(active_sessions) == 0:
                     restore_session_from_data(data, session)
-                    # Only reset status if conversion was not in progress
-                    # This allows the process to continue and resync
-                    if not was_converting:
+                    # Reset status to None if:
+                    # 1. Conversion was not in progress, OR
+                    # 2. This is a fresh server start (session didn't exist before)
+                    #    which means Docker was restarted and no actual process is running
+                    # 3. This is a reconnection (page refresh) - allow it to proceed
+                    if not was_converting or not session_existed or is_reconnecting:
                         session['status'] = None
-                if not ctx_tracker.start_session(session['id']):
+
+                # Allow session start if it's a reconnection from the same browser OR if start_session succeeds
+                if not is_reconnecting and not ctx_tracker.start_session(session['id']):
                     error = "Your session is already active.<br>If it's not the case please close your browser and relaunch it."
                     return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
                 else:
