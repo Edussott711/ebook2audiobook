@@ -1,13 +1,35 @@
 version: '3.8'
 
-# Distributed Mode Docker Compose - No Shared Storage Required
-# Audio files are transferred directly via Redis using base64 encoding
+# ============================================================================
+# Docker Compose Mode Distribué - Setup Complet Sur UNE Machine
+# ============================================================================
 #
-# Usage:
-#   1. Start on coordinator machine: docker-compose -f docker-compose.distributed.yml up coordinator redis flower
-#   2. Start on worker machines: docker run --gpus all -e REDIS_URL=redis://<coordinator-ip>:6379/0 ebook2audiobook-worker
+# Ce fichier lance TOUT sur une machine : Redis + Flower + 2 Workers
 #
-# For multi-machine setup, see deployment scripts in scripts/distributed/
+# 🚀 USAGE SIMPLE :
+#
+#   # Démarrer tout (build + run)
+#   docker-compose -f docker-compose.distributed.yml up --build -d
+#
+#   # Voir les logs
+#   docker-compose -f docker-compose.distributed.yml logs -f
+#
+#   # Voir seulement les workers
+#   docker-compose -f docker-compose.distributed.yml logs -f worker1 worker2
+#
+#   # Accéder à l'interface
+#   http://localhost:7860  (Gradio)
+#   http://localhost:5555  (Flower monitoring)
+#
+#   # Arrêter tout
+#   docker-compose -f docker-compose.distributed.yml down
+#
+# 📝 CONFIGURATION :
+#   - Créer fichier .env pour personnaliser (optionnel)
+#   - NUM_WORKERS=2 (nombre de workers)
+#   - REDIS_PASSWORD= (laisser vide par défaut)
+#
+# ============================================================================
 
 services:
   # Redis - Message broker, result backend, and audio transfer medium
@@ -54,16 +76,19 @@ services:
              python app.py --script_mode full_docker"
     restart: unless-stopped
 
-  # Worker - Processing nodes (run on machines with GPUs)
-  # NOTE: For multi-machine setup, use docker run instead (see deployment scripts)
-  worker:
+  # Worker 1 - GPU 0 (ou CPU si pas de GPU)
+  worker1:
     build:
       context: .
       dockerfile: Dockerfile.worker
+      args:
+        TORCH_VERSION: cuda124  # Changer en "cpu" si pas de GPU
+        SKIP_XTTS_TEST: "false"
+    container_name: ebook2audio-worker-1
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CUDA_VISIBLE_DEVICES=${WORKER_GPU_ID:-0}
-      - WORKER_ID=${WORKER_ID:-worker}
+      - CUDA_VISIBLE_DEVICES=0  # Mettre "" pour forcer CPU
+      - WORKER_ID=worker_1
     volumes:
       - ./models:/app/models
     depends_on:
@@ -72,12 +97,40 @@ services:
     networks:
       - ebook2audio-net
     deploy:
-      replicas: ${NUM_WORKERS:-2}
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ['0']
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Worker 2 - GPU 1 (ou GPU 0 si une seule GPU, ou CPU)
+  worker2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        TORCH_VERSION: cuda124  # Changer en "cpu" si pas de GPU
+        SKIP_XTTS_TEST: "true"  # Skip test (déjà fait par worker1)
+    container_name: ebook2audio-worker-2
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CUDA_VISIBLE_DEVICES=1  # Mettre "0" si une seule GPU, ou "" pour CPU
+      - WORKER_ID=worker_2
+    volumes:
+      - ./models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ebook2audio-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']  # Changer en ['0'] si une seule GPU
               capabilities: [gpu]
     restart: unless-stopped
 

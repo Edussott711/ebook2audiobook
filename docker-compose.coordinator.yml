@@ -1,0 +1,99 @@
+version: '3.8'
+
+# ============================================================================
+# Docker Compose Coordinator - Pour Machine Coordinator Seulement
+# ============================================================================
+#
+# Ce fichier lance uniquement : Redis + Flower + Coordinator (interface web)
+# Les workers doivent être lancés sur d'autres machines
+#
+# 🚀 USAGE :
+#
+#   # Sur machine coordinator
+#   docker-compose -f docker-compose.coordinator.yml up --build -d
+#
+#   # Voir IP de la machine
+#   hostname -I
+#
+#   # Sur machines workers (remplacer <COORDINATOR_IP>)
+#   docker-compose -f docker-compose.worker.yml up --build -d
+#
+#   # Accès
+#   http://<coordinator-ip>:7860  (Gradio)
+#   http://<coordinator-ip>:5555  (Flower)
+#
+# ============================================================================
+
+services:
+  # Redis - Message broker + Result backend
+  redis:
+    image: redis:7-alpine
+    container_name: ebook2audio-redis
+    command: redis-server --appendonly yes --maxmemory 4gb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ebook2audio-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Flower - Monitoring dashboard
+  flower:
+    image: mher/flower:2.0
+    container_name: ebook2audio-flower
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - FLOWER_PORT=5555
+      - FLOWER_BASIC_AUTH=admin:admin
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ebook2audio-net
+    restart: unless-stopped
+
+  # Coordinator - Interface web Gradio
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: cuda124
+    container_name: ebook2audio-coordinator
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NUM_WORKERS=${NUM_WORKERS:-2}
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ebook2audio-net
+    command: >
+      sh -c "echo 'Coordinator ready. Waiting for workers to connect...' &&
+             echo 'Flower dashboard: http://localhost:5555' &&
+             echo 'Gradio interface: http://localhost:7860' &&
+             python app.py --script_mode full_docker"
+    restart: unless-stopped
+
+networks:
+  ebook2audio-net:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local

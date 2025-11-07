@@ -3588,7 +3588,16 @@ def web_interface(args, ctx):
                         session['status'] = None
 
                 # Allow session start if it's a reconnection from the same browser OR if start_session succeeds
-                if not is_reconnecting and not ctx_tracker.start_session(session['id']):
+                # Also allow if session was "converting" but process_id is None (Docker restart case)
+                can_start_session = is_reconnecting or ctx_tracker.start_session(session['id'])
+
+                # Special case: session stuck in "converting" but no actual process (Docker restart)
+                if not can_start_session and session.get('status') == 'converting' and session.get('process_id') is None:
+                    # Force reset and allow restart
+                    ctx_tracker.end_session(session['id'])
+                    can_start_session = ctx_tracker.start_session(session['id'])
+
+                if not can_start_session:
                     error = "Your session is already active.<br>If it's not the case please close your browser and relaunch it."
                     return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
                 else:

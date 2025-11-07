@@ -1,0 +1,86 @@
+version: '3.8'
+
+# ============================================================================
+# Docker Compose Worker - Pour Ajouter Workers Sur D'Autres Machines
+# ============================================================================
+#
+# Ce fichier lance des workers qui se connectent au coordinator
+#
+# 🚀 USAGE :
+#
+#   1. Sur machine worker, créer fichier .env:
+#      COORDINATOR_IP=192.168.1.10
+#
+#   2. Lancer les workers:
+#      docker-compose -f docker-compose.worker.yml up --build -d
+#
+#   3. Voir les logs:
+#      docker-compose -f docker-compose.worker.yml logs -f
+#
+#   4. Vérifier dans Flower:
+#      http://<coordinator-ip>:5555
+#
+# 📝 CONFIGURATION dans .env:
+#   COORDINATOR_IP=192.168.1.10  (IP du coordinator)
+#   NUM_GPUS=2                   (nombre de GPUs sur cette machine)
+#
+# Pour CPU uniquement, modifier CUDA_VISIBLE_DEVICES="" dans le service
+#
+# ============================================================================
+
+services:
+  # Worker 1 - GPU 0
+  worker1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        TORCH_VERSION: cuda124  # ou "cpu"
+        SKIP_XTTS_TEST: "false"
+    container_name: ebook2audio-worker-1
+    environment:
+      - REDIS_URL=redis://${COORDINATOR_IP:-localhost}:6379/0
+      - CUDA_VISIBLE_DEVICES=0  # "" pour CPU
+      - WORKER_ID=worker_${HOSTNAME:-machine}_gpu0
+    volumes:
+      - ./models:/app/models
+    network_mode: host  # Pour accéder au Redis du coordinator
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Worker 2 - GPU 1 (commenter si une seule GPU)
+  worker2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        TORCH_VERSION: cuda124
+        SKIP_XTTS_TEST: "true"
+    container_name: ebook2audio-worker-2
+    environment:
+      - REDIS_URL=redis://${COORDINATOR_IP:-localhost}:6379/0
+      - CUDA_VISIBLE_DEVICES=1
+      - WORKER_ID=worker_${HOSTNAME:-machine}_gpu1
+    volumes:
+      - ./models:/app/models
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    restart: unless-stopped
+
+# Note: Si plus de 2 GPUs, dupliquer le service worker2 et changer:
+#  - Le nom du service (worker3, worker4, etc.)
+#  - CUDA_VISIBLE_DEVICES (2, 3, etc.)
+#  - device_ids (['2'], ['3'], etc.)
+#  - WORKER_ID (gpu2, gpu3, etc.)
