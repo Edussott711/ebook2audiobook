@@ -1462,7 +1462,7 @@ def convert_chapters2audio(id):
             print(error)
             return False
         total_iterations = sum(len(session['chapters'][x]) for x in range(total_chapters))
-        total_sentences = sum(sum(1 for row in chapter if row.strip() not in TTS_SML.values()) for chapter in session['chapters'])
+        total_sentences = sum(sum(1 for row in chapter if row and row.strip() not in TTS_SML.values()) for chapter in session['chapters'])
         if total_sentences == 0:
             error = 'No sentences found!'
             print(error)
@@ -1485,13 +1485,13 @@ def convert_chapters2audio(id):
                         # Update sentence_number and progress bar for skipped chapter
                         sentences = session['chapters'][x]
                         for sentence in sentences:
-                            if sentence.strip() not in TTS_SML.values():
+                            if sentence and sentence.strip() not in TTS_SML.values():
                                 sentence_number += 1
                             t.update(1)
                         continue
 
                 sentences = session['chapters'][x]
-                sentences_count = sum(1 for row in sentences if row.strip() not in TTS_SML.values())
+                sentences_count = sum(1 for row in sentences if row and row.strip() not in TTS_SML.values())
                 start = sentence_number
                 msg = f'Block {chapter_num} containing {sentences_count} sentences...'
                 print(msg)
@@ -1504,6 +1504,10 @@ def convert_chapters2audio(id):
                         if sentence_number <= resume_sentence and sentence_number > 0:
                             msg = f'**Recovering missing file sentence {sentence_number}'
                             print(msg)
+                        # Skip None sentences
+                        if sentence is None:
+                            t.update(1)
+                            continue
                         sentence = sentence.strip()
                         success = tts_manager.convert_sentence2audio(sentence_number, sentence) if sentence else True
                         if success:
@@ -1516,7 +1520,7 @@ def convert_chapters2audio(id):
                             print(msg)
                         else:
                             return False
-                    if sentence.strip() not in TTS_SML.values():
+                    if sentence and sentence.strip() not in TTS_SML.values():
                         sentence_number += 1
                     t.update(1)  # advance for every iteration, including SML
                 end = sentence_number - 1 if sentence_number > 1 else sentence_number
@@ -3522,20 +3526,24 @@ def web_interface(args, ctx):
 
                 # Check if conversion was in progress before restoring
                 was_converting = data.get('status') == 'converting'
-                is_reconnecting = req.session_hash in active_sessions
 
-                if data.get('tab_id') == session.get('tab_id') or len(active_sessions) == 0:
+                # Detect if this is a reconnection from the same browser tab
+                same_tab_reconnecting = data.get('tab_id') == session.get('tab_id') and session.get('tab_id') is not None
+
+                # Count active socket connections for this session
+                # Session stores socket hashes as keys, so we check how many are still in active_sessions
+                active_socket_count = sum(1 for hash_key in active_sessions if hash_key in session.keys())
+                has_no_active_sockets = active_socket_count == 0
+
+                if same_tab_reconnecting or len(active_sessions) == 0:
                     restore_session_from_data(data, session)
-                    # Reset status to None if:
-                    # 1. Conversion was not in progress, OR
-                    # 2. This is a fresh server start (session didn't exist before)
-                    #    which means Docker was restarted and no actual process is running
-                    # 3. This is a reconnection (page refresh) - allow it to proceed
-                    if not was_converting or not session_existed or is_reconnecting:
-                        session['status'] = None
+                    # Always reset status to None when reconnecting to allow UI to connect
+                    # If a conversion is truly running in background, it will update the status
+                    # This prevents blocking legitimate reconnections (page refresh, etc.)
+                    session['status'] = None
 
-                # Allow session start if it's a reconnection from the same browser OR if start_session succeeds
-                if not is_reconnecting and not ctx_tracker.start_session(session['id']):
+                # Block only if it's NOT a reconnection AND start_session fails
+                if not same_tab_reconnecting and not has_no_active_sockets and not ctx_tracker.start_session(session['id']):
                     error = "Your session is already active.<br>If it's not the case please close your browser and relaunch it."
                     return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
                 else:
@@ -3562,15 +3570,9 @@ def web_interface(args, ctx):
                 if session['audiobook'] is not None:
                     if not os.path.exists(session['audiobook']):
                         session['audiobook'] = None
-                # If conversion was in progress and is still ongoing, keep it as 'converting'
-                # If it completed while disconnected, it will already be 'ready' from the conversion process
-                if was_converting and session['status'] == 'converting':
-                    # Conversion is still in progress, keep status
-                    pass
-                elif was_converting and session['status'] != 'converting':
-                    # Conversion completed while disconnected, ensure status is correct
-                    if session['status'] != 'ready':
-                        session['status'] = 'ready'
+                # Note: Status has been reset to None to allow UI reconnection
+                # If a background conversion is truly running, it will update the status accordingly
+                # If the conversion completed while disconnected, the status will already be set correctly by the process
                 session['system'] = (f"{platform.system()}-{platform.release()}").lower()
                 session['custom_model_dir'] = os.path.join(models_dir, '__sessions', f"model-{session['id']}")
                 session['voice_dir'] = os.path.join(voices_dir, '__sessions', f"voice-{session['id']}", session['language'])
