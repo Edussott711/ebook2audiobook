@@ -410,3 +410,216 @@ class TestConvertChaptersErrorHandling:
         result = convert_chapters2audio('invalid-session')
 
         assert result is False
+
+
+# ============================================================================
+# Checkpoint Integration Tests
+# ============================================================================
+
+class TestConvertChaptersCheckpoint:
+    """Test checkpoint integration in convert_chapters2audio."""
+
+    @patch('lib.audio.converter.context')
+    @patch('lib.audio.converter.CheckpointManager')
+    @patch('lib.audio.converter.TTSManager')
+    @patch('lib.audio.converter.combine_audio_sentences')
+    def test_skip_already_converted_chapters(
+        self, mock_combine, mock_tts_manager, mock_checkpoint_manager, mock_context
+    ):
+        """Test skipping chapters already in converted_chapters list."""
+        session = {
+            'cancellation_requested': False,
+            'tts_engine': 'xtts',
+            'chapters': [
+                ["Sentence 1.", "Sentence 2."],
+                ["Sentence 3.", "Sentence 4."],
+                ["Sentence 5.", "Sentence 6."]
+            ],
+            'chapters_dir': '/tmp/chapters',
+            'chapters_dir_sentences': '/tmp/sentences',
+            'converted_chapters': [1, 2]  # Chapters 1 and 2 already done
+        }
+        mock_context.get_session.return_value = session
+
+        # Mock checkpoint manager
+        mock_checkpoint_mgr = MagicMock()
+        mock_checkpoint_mgr.get_checkpoint_info.return_value = None
+        mock_checkpoint_manager.return_value = mock_checkpoint_mgr
+
+        # Mock TTSManager
+        mock_tts = MagicMock()
+        mock_tts.convert_sentence2audio.return_value = True
+        mock_tts_manager.return_value = mock_tts
+
+        mock_combine.return_value = True
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            chapters_dir = Path(tmpdir) / "chapters"
+            sentences_dir = Path(tmpdir) / "sentences"
+            chapters_dir.mkdir()
+            sentences_dir.mkdir()
+
+            # Create existing chapter files for chapters 1 and 2
+            (chapters_dir / "chapter_1.wav").touch()
+            (chapters_dir / "chapter_2.wav").touch()
+
+            session['chapters_dir'] = str(chapters_dir)
+            session['chapters_dir_sentences'] = str(sentences_dir)
+
+            result = convert_chapters2audio('test-session')
+
+            assert result is True
+            # Should only process chapter 3 (2 sentences)
+            assert mock_tts.convert_sentence2audio.call_count == 2
+            # Should save checkpoint after chapter 3
+            mock_checkpoint_mgr.save_checkpoint.assert_called()
+
+    @patch('lib.audio.converter.context')
+    @patch('lib.audio.converter.CheckpointManager')
+    @patch('lib.audio.converter.TTSManager')
+    @patch('lib.audio.converter.combine_audio_sentences')
+    def test_restore_from_checkpoint(
+        self, mock_combine, mock_tts_manager, mock_checkpoint_manager, mock_context
+    ):
+        """Test restoring from checkpoint info."""
+        session = {
+            'cancellation_requested': False,
+            'tts_engine': 'xtts',
+            'chapters': [
+                ["Sentence 1.", "Sentence 2."],
+                ["Sentence 3.", "Sentence 4."]
+            ],
+            'chapters_dir': '/tmp/chapters',
+            'chapters_dir_sentences': '/tmp/sentences',
+            'converted_chapters': []
+        }
+        mock_context.get_session.return_value = session
+
+        # Mock checkpoint manager with existing checkpoint
+        mock_checkpoint_mgr = MagicMock()
+        mock_checkpoint_mgr.get_checkpoint_info.return_value = {
+            'stage': 'audio_conversion_in_progress',
+            'last_completed_chapter': 1
+        }
+        mock_checkpoint_manager.return_value = mock_checkpoint_mgr
+
+        mock_tts = MagicMock()
+        mock_tts.convert_sentence2audio.return_value = True
+        mock_tts_manager.return_value = mock_tts
+
+        mock_combine.return_value = True
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            chapters_dir = Path(tmpdir) / "chapters"
+            sentences_dir = Path(tmpdir) / "sentences"
+            chapters_dir.mkdir()
+            sentences_dir.mkdir()
+
+            session['chapters_dir'] = str(chapters_dir)
+            session['chapters_dir_sentences'] = str(sentences_dir)
+
+            result = convert_chapters2audio('test-session')
+
+            assert result is True
+            # Should call restore_from_checkpoint
+            mock_checkpoint_mgr.restore_from_checkpoint.assert_called_once()
+
+    @patch('lib.audio.converter.context')
+    @patch('lib.audio.converter.CheckpointManager')
+    @patch('lib.audio.converter.TTSManager')
+    @patch('lib.audio.converter.combine_audio_sentences')
+    def test_none_sentence_protection(
+        self, mock_combine, mock_tts_manager, mock_checkpoint_manager, mock_context
+    ):
+        """Test that None sentences are skipped without crashing."""
+        session = {
+            'cancellation_requested': False,
+            'tts_engine': 'xtts',
+            'chapters': [
+                ["Sentence 1.", None, "Sentence 2.", None],  # Mixed with None
+                ["Sentence 3.", None]
+            ],
+            'chapters_dir': '/tmp/chapters',
+            'chapters_dir_sentences': '/tmp/sentences'
+        }
+        mock_context.get_session.return_value = session
+
+        mock_checkpoint_mgr = MagicMock()
+        mock_checkpoint_mgr.get_checkpoint_info.return_value = None
+        mock_checkpoint_manager.return_value = mock_checkpoint_mgr
+
+        mock_tts = MagicMock()
+        mock_tts.convert_sentence2audio.return_value = True
+        mock_tts_manager.return_value = mock_tts
+
+        mock_combine.return_value = True
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            chapters_dir = Path(tmpdir) / "chapters"
+            sentences_dir = Path(tmpdir) / "sentences"
+            chapters_dir.mkdir()
+            sentences_dir.mkdir()
+
+            session['chapters_dir'] = str(chapters_dir)
+            session['chapters_dir_sentences'] = str(sentences_dir)
+
+            result = convert_chapters2audio('test-session')
+
+            assert result is True
+            # Should only process non-None sentences (3 sentences)
+            assert mock_tts.convert_sentence2audio.call_count == 3
+
+    @patch('lib.audio.converter.context')
+    @patch('lib.audio.converter.CheckpointManager')
+    @patch('lib.audio.converter.TTSManager')
+    @patch('lib.audio.converter.combine_audio_sentences')
+    def test_checkpoint_saved_after_each_chapter(
+        self, mock_combine, mock_tts_manager, mock_checkpoint_manager, mock_context
+    ):
+        """Test that checkpoint is saved after each chapter completion."""
+        session = {
+            'cancellation_requested': False,
+            'tts_engine': 'xtts',
+            'chapters': [
+                ["Sentence 1."],
+                ["Sentence 2."],
+                ["Sentence 3."]
+            ],
+            'chapters_dir': '/tmp/chapters',
+            'chapters_dir_sentences': '/tmp/sentences'
+        }
+        mock_context.get_session.return_value = session
+
+        mock_checkpoint_mgr = MagicMock()
+        mock_checkpoint_mgr.get_checkpoint_info.return_value = None
+        mock_checkpoint_manager.return_value = mock_checkpoint_mgr
+
+        mock_tts = MagicMock()
+        mock_tts.convert_sentence2audio.return_value = True
+        mock_tts_manager.return_value = mock_tts
+
+        mock_combine.return_value = True
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            chapters_dir = Path(tmpdir) / "chapters"
+            sentences_dir = Path(tmpdir) / "sentences"
+            chapters_dir.mkdir()
+            sentences_dir.mkdir()
+
+            session['chapters_dir'] = str(chapters_dir)
+            session['chapters_dir_sentences'] = str(sentences_dir)
+
+            result = convert_chapters2audio('test-session')
+
+            assert result is True
+            # Should save checkpoint after each chapter (3 times)
+            assert mock_checkpoint_mgr.save_checkpoint.call_count == 3
+            # Verify checkpoint calls include chapter progress
+            for call_args in mock_checkpoint_mgr.save_checkpoint.call_args_list:
+                assert call_args[0][0] == 'audio_conversion_in_progress'
+                assert 'last_completed_chapter' in call_args[0][1]
+                assert 'total_chapters' in call_args[0][1]

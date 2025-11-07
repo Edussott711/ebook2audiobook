@@ -13,6 +13,7 @@ from lib.core.session import context
 from lib.core.exceptions import DependencyError
 from lib.conf import default_audio_proc_format, TTS_SML
 from lib.audio.combiner import combine_audio_sentences
+from lib.checkpoint_manager import CheckpointManager
 
 
 def convert_chapters2audio(id: str) -> bool:
@@ -20,14 +21,18 @@ def convert_chapters2audio(id: str) -> bool:
     Convert all chapters in a session to audio files using TTS.
 
     This is the main orchestration function that:
-    1. Initializes the TTS engine (TTSManager)
-    2. Detects resume points for chapters and sentences
-    3. Processes each sentence through TTS
-    4. Combines sentences into chapter audio files
-    5. Provides progress tracking via tqdm and Gradio
+    1. Initializes checkpoint manager for resume capability
+    2. Initializes the TTS engine (TTSManager)
+    3. Detects resume points for chapters and sentences
+    4. Processes each sentence through TTS
+    5. Combines sentences into chapter audio files
+    6. Saves checkpoints after each chapter completion
+    7. Provides progress tracking via tqdm and Gradio
 
     Resume Capability:
-        - Automatically detects existing chapter and sentence files
+        - Checkpoint-based resume from last completed chapter
+        - Automatically skips chapters already converted
+        - Detects existing chapter and sentence files
         - Resumes from the last completed sentence
         - Recovers missing files in the sequence
 
@@ -38,17 +43,24 @@ def convert_chapters2audio(id: str) -> bool:
         bool: True if conversion succeeded, False otherwise
 
     Process Flow:
-        1. Load session and initialize TTS engine
-        2. Scan for existing audio files (chapters and sentences)
-        3. Calculate resume points and missing files
-        4. For each chapter:
-            a. Process each sentence through TTS
-            b. Save individual sentence audio files
-            c. Combine sentences into chapter file
-        5. Track progress with visual feedback
+        1. Load session and initialize checkpoint manager
+        2. Restore from checkpoint if available
+        3. Initialize TTS engine
+        4. Scan for existing audio files (chapters and sentences)
+        5. Calculate resume points and missing files
+        6. For each chapter:
+            a. Skip if already in converted_chapters list
+            b. Process each sentence through TTS (with None protection)
+            c. Save individual sentence audio files
+            d. Combine sentences into chapter file
+            e. Save checkpoint with chapter progress
+        7. Track progress with visual feedback
 
     Example:
         >>> convert_chapters2audio('session_123')
+        Resuming conversion from checkpoint - 2 chapters already completed
+        ✓ Skipping Block 1 - already converted (from checkpoint)
+        ✓ Skipping Block 2 - already converted (from checkpoint)
         Resuming from block 3
         Resuming from sentence 42
         --------------------------------------------------
@@ -59,10 +71,13 @@ def convert_chapters2audio(id: str) -> bool:
         True
 
     Notes:
+        - Uses CheckpointManager for persistent resume capability
+        - Skips None sentences to prevent crashes
         - Uses multiprocessing for TTS (via TTSManager)
         - Supports cancellation via session['cancellation_requested']
         - Requires sufficient VRAM/RAM for TTS engine
         - Preserves SML (Speech Markup Language) tags
+        - Tracks converted_chapters list in session
     """
     session = context.get_session(id)
     try:
@@ -70,6 +85,20 @@ def convert_chapters2audio(id: str) -> bool:
         if session['cancellation_requested']:
             print('Cancel requested')
             return False
+
+        # Initialize checkpoint manager for per-chapter checkpoints
+        checkpoint_mgr = CheckpointManager(session)
+
+        # Load checkpoint info to resume from last completed chapter
+        checkpoint_info = checkpoint_mgr.get_checkpoint_info()
+        if checkpoint_info and checkpoint_info.get('stage') in ['audio_conversion_in_progress', 'audio_converted']:
+            checkpoint_mgr.restore_from_checkpoint()
+            msg = f"Resuming conversion from checkpoint - {len(session.get('converted_chapters', []))} chapters already completed"
+            print(msg)
+
+        # Initialize converted_chapters list if not exists
+        if 'converted_chapters' not in session:
+            session['converted_chapters'] = []
 
         # Initialize TTS engine
         tts_manager = TTSManager(session)
@@ -123,7 +152,7 @@ def convert_chapters2audio(id: str) -> bool:
 
         # Calculate totals
         total_iterations = sum(len(session['chapters'][x]) for x in range(total_chapters))
-        total_sentences = sum(sum(1 for row in chapter if row.strip() not in TTS_SML.values()) for chapter in session['chapters'])
+        total_sentences = sum(sum(1 for row in chapter if row and row.strip() not in TTS_SML.values()) for chapter in session['chapters'])
         if total_sentences == 0:
             error = 'No sentences found!'
             print(error)
@@ -141,8 +170,23 @@ def convert_chapters2audio(id: str) -> bool:
             for x in range(0, total_chapters):
                 chapter_num = x + 1
                 chapter_audio_file = f'chapter_{chapter_num}.{default_audio_proc_format}'
+
+                # Skip chapters that were already successfully converted (from checkpoint)
+                if chapter_num in session.get('converted_chapters', []):
+                    chapter_file_path = os.path.join(session['chapters_dir'], chapter_audio_file)
+                    if os.path.exists(chapter_file_path):
+                        msg = f'✓ Skipping Block {chapter_num} - already converted (from checkpoint)'
+                        print(msg)
+                        # Update sentence_number and progress bar for skipped chapter
+                        sentences = session['chapters'][x]
+                        for sentence in sentences:
+                            if sentence and sentence.strip() not in TTS_SML.values():
+                                sentence_number += 1
+                            t.update(1)
+                        continue
+
                 sentences = session['chapters'][x]
-                sentences_count = sum(1 for row in sentences if row.strip() not in TTS_SML.values())
+                sentences_count = sum(1 for row in sentences if row and row.strip() not in TTS_SML.values())
                 start = sentence_number
 
                 msg = f'Block {chapter_num} containing {sentences_count} sentences...'
@@ -162,6 +206,11 @@ def convert_chapters2audio(id: str) -> bool:
                             msg = f'**Recovering missing file sentence {sentence_number}'
                             print(msg)
 
+                        # Skip None sentences
+                        if sentence is None:
+                            t.update(1)
+                            continue
+
                         sentence = sentence.strip()
                         success = tts_manager.convert_sentence2audio(sentence_number, sentence) if sentence else True
 
@@ -178,7 +227,7 @@ def convert_chapters2audio(id: str) -> bool:
                             return False
 
                     # Increment sentence counter (skip SML tags)
-                    if sentence.strip() not in TTS_SML.values():
+                    if sentence and sentence.strip() not in TTS_SML.values():
                         sentence_number += 1
 
                     t.update(1)  # advance for every iteration, including SML
@@ -196,6 +245,12 @@ def convert_chapters2audio(id: str) -> bool:
                     if combine_audio_sentences(chapter_audio_file, start, end, session):
                         msg = f'Combining block {chapter_num} to audio, sentence {start} to {end}'
                         print(msg)
+                        # Add this chapter to converted list and save checkpoint
+                        if chapter_num not in session['converted_chapters']:
+                            session['converted_chapters'].append(chapter_num)
+                        checkpoint_mgr.save_checkpoint('audio_conversion_in_progress',
+                                                      {'last_completed_chapter': chapter_num,
+                                                       'total_chapters': total_chapters})
                     else:
                         msg = 'combine_audio_sentences() failed!'
                         print(msg)
