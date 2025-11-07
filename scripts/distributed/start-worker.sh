@@ -1,6 +1,6 @@
 #!/bin/bash
-# Start a worker node on any machine
-# This script should be run on each worker machine with GPU
+# Start a worker node on any machine with GPU or CPU
+# This script should be run on each worker machine
 
 set -e
 
@@ -8,6 +8,7 @@ set -e
 COORDINATOR_IP="${COORDINATOR_IP:-localhost}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 WORKER_ID="${WORKER_ID:-worker_$(hostname)_$(date +%s)}"
+USE_GPU="${USE_GPU:-auto}"  # auto, yes, no
 GPU_ID="${GPU_ID:-0}"
 
 # Construct Redis URL
@@ -21,11 +22,36 @@ echo "====================================="
 echo "Starting Distributed Worker"
 echo "====================================="
 echo ""
+
+# Detect GPU availability
+GPU_AVAILABLE="no"
+if command -v nvidia-smi &> /dev/null; then
+    if nvidia-smi &> /dev/null; then
+        GPU_AVAILABLE="yes"
+    fi
+fi
+
+# Determine if we should use GPU
+USE_GPU_FINAL="no"
+if [ "$USE_GPU" = "yes" ]; then
+    if [ "$GPU_AVAILABLE" = "yes" ]; then
+        USE_GPU_FINAL="yes"
+    else
+        echo "Warning: GPU requested but not available, falling back to CPU"
+    fi
+elif [ "$USE_GPU" = "auto" ] && [ "$GPU_AVAILABLE" = "yes" ]; then
+    USE_GPU_FINAL="yes"
+fi
+
 echo "Configuration:"
 echo "  - Worker ID: $WORKER_ID"
-echo "  - GPU ID: $GPU_ID"
 echo "  - Coordinator IP: $COORDINATOR_IP"
 echo "  - Redis URL: ${REDIS_URL}"
+echo "  - GPU Available: $GPU_AVAILABLE"
+echo "  - Using GPU: $USE_GPU_FINAL"
+if [ "$USE_GPU_FINAL" = "yes" ]; then
+    echo "  - GPU ID: $GPU_ID"
+fi
 echo ""
 echo "====================================="
 
@@ -35,21 +61,36 @@ if ! docker image inspect ebook2audiobook-worker:latest &> /dev/null; then
     echo ""
     echo "Please build the worker image first:"
     echo "  cd /path/to/ebook2audiobook"
-    echo "  docker build -f Dockerfile.worker -t ebook2audiobook-worker:latest --build-arg TORCH_VERSION=cuda124 ."
+    if [ "$USE_GPU_FINAL" = "yes" ]; then
+        echo "  ./scripts/distributed/build-worker-image.sh  # For GPU"
+    else
+        echo "  TORCH_VERSION=cpu ./scripts/distributed/build-worker-image.sh  # For CPU"
+    fi
     echo ""
-    echo "Or run: ./scripts/distributed/build-worker-image.sh"
     exit 1
 fi
 
+# Build docker run command
+DOCKER_CMD="docker run -d --name ebook2audio-worker-${WORKER_ID} --restart unless-stopped"
+
+# Add GPU support if needed
+if [ "$USE_GPU_FINAL" = "yes" ]; then
+    DOCKER_CMD="$DOCKER_CMD --gpus device=${GPU_ID}"
+    CUDA_VISIBLE="${GPU_ID}"
+else
+    # Force CPU mode by setting CUDA_VISIBLE_DEVICES to empty
+    CUDA_VISIBLE=""
+fi
+
+# Add environment variables and image
+DOCKER_CMD="$DOCKER_CMD \
+    -e REDIS_URL=${REDIS_URL} \
+    -e WORKER_ID=${WORKER_ID} \
+    -e CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE} \
+    ebook2audiobook-worker:latest"
+
 # Start the worker
-docker run -d \
-    --name "ebook2audio-worker-${WORKER_ID}" \
-    --gpus "device=${GPU_ID}" \
-    --restart unless-stopped \
-    -e REDIS_URL="${REDIS_URL}" \
-    -e WORKER_ID="${WORKER_ID}" \
-    -e CUDA_VISIBLE_DEVICES="${GPU_ID}" \
-    ebook2audiobook-worker:latest
+eval $DOCKER_CMD
 
 echo ""
 echo "Worker started successfully!"

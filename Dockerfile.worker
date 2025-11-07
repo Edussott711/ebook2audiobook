@@ -1,6 +1,8 @@
 # Dockerfile for distributed workers
-# This Dockerfile creates a standalone worker that can run on any machine with GPU
-# Usage: docker run --gpus all -e REDIS_URL=redis://coordinator-ip:6379/0 ebook2audiobook-worker
+# This Dockerfile creates a standalone worker that can run on any machine with GPU or CPU
+#
+# GPU Usage: docker run --gpus all -e REDIS_URL=redis://coordinator-ip:6379/0 ebook2audiobook-worker
+# CPU Usage: docker run -e REDIS_URL=redis://coordinator-ip:6379/0 -e CUDA_VISIBLE_DEVICES="" ebook2audiobook-worker
 
 ARG BASE=python:3.12
 ARG BASE_IMAGE=base

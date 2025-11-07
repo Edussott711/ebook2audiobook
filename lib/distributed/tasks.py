@@ -145,28 +145,44 @@ def health_check() -> Dict[str, Any]:
     Vérifie la santé du worker.
 
     Returns:
-        Dict avec status, gpu_available, etc.
+        Dict avec status, gpu_available, device_type, etc.
     """
     import torch
+    import os
 
     status = 'ok'
     gpu_available = torch.cuda.is_available()
     gpu_memory_free = 0
+    gpu_count = 0
+    device_type = 'cpu'
     tts_loaded = len(_TTS_ENGINE_CACHE) > 0
 
-    if gpu_available:
+    # Déterminer le device utilisé
+    cuda_visible = os.getenv('CUDA_VISIBLE_DEVICES', '')
+
+    if gpu_available and cuda_visible != '':
+        device_type = 'cuda'
         try:
-            gpu_memory_free = torch.cuda.mem_get_info()[0] // (1024 ** 2)
+            gpu_count = torch.cuda.device_count()
+            gpu_memory_free = torch.cuda.mem_get_info()[0] // (1024 ** 2)  # MB
             if gpu_memory_free < 1000:  # < 1GB libre
                 status = 'degraded'
         except Exception:
             status = 'error'
+    elif gpu_available and cuda_visible == '':
+        # GPU disponible mais CUDA_VISIBLE_DEVICES vide = mode CPU forcé
+        device_type = 'cpu (GPU available but disabled)'
+    else:
+        device_type = 'cpu'
 
     return {
         'status': status,
+        'device_type': device_type,
         'gpu_available': gpu_available,
-        'gpu_memory_free': gpu_memory_free,
-        'tts_model_loaded': tts_loaded
+        'gpu_count': gpu_count,
+        'gpu_memory_free_mb': gpu_memory_free,
+        'tts_model_loaded': tts_loaded,
+        'cached_models': list(_TTS_ENGINE_CACHE.keys())
     }
 
 
@@ -174,11 +190,31 @@ def _get_or_create_tts_engine(tts_config: Dict[str, Any]):
     """Récupère le TTS engine depuis le cache ou le crée."""
     global _TTS_ENGINE_CACHE
 
-    # Clé de cache basée sur config
-    cache_key = f"{tts_config.get('model_name', 'xtts')}_{tts_config.get('voice_name', 'default')}"
+    # Détecter le device à utiliser
+    requested_device = tts_config.get('device')
+    gpu_available = _is_gpu_available()
+
+    # Déterminer le device final
+    if requested_device:
+        # Device explicitement demandé
+        device = requested_device
+    else:
+        # Auto-détection : GPU si disponible, sinon CPU
+        device = 'cuda' if gpu_available else 'cpu'
+
+    # Validation : si GPU demandé mais pas disponible, fallback CPU
+    if device == 'cuda' and not gpu_available:
+        logger.warning("GPU requested but not available, falling back to CPU")
+        device = 'cpu'
+
+    # Clé de cache basée sur config + device
+    cache_key = f"{tts_config.get('model_name', 'xtts')}_{tts_config.get('voice_name', 'default')}_{device}"
 
     if cache_key not in _TTS_ENGINE_CACHE:
-        logger.info(f"Loading TTS model: {cache_key}")
+        logger.info(
+            f"Loading TTS model: {cache_key} "
+            f"(device: {device}, GPU available: {gpu_available})"
+        )
 
         # Import dynamique pour éviter charge au démarrage
         from lib.classes.tts_manager import TTSManager
@@ -188,12 +224,12 @@ def _get_or_create_tts_engine(tts_config: Dict[str, Any]):
             model_name=tts_config.get('model_name', 'xtts'),
             voice_name=tts_config.get('voice_name'),
             language=tts_config.get('language', 'en'),
-            device=tts_config.get('device', 'cuda' if _is_gpu_available() else 'cpu'),
+            device=device,
             custom_model_path=tts_config.get('custom_model')
         )
 
         _TTS_ENGINE_CACHE[cache_key] = tts_manager
-        logger.info(f"TTS model loaded and cached: {cache_key}")
+        logger.info(f"TTS model loaded and cached: {cache_key} on {device}")
 
     return _TTS_ENGINE_CACHE[cache_key]
 
