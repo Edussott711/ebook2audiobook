@@ -1462,7 +1462,7 @@ def convert_chapters2audio(id):
             print(error)
             return False
         total_iterations = sum(len(session['chapters'][x]) for x in range(total_chapters))
-        total_sentences = sum(sum(1 for row in chapter if row.strip() not in TTS_SML.values()) for chapter in session['chapters'])
+        total_sentences = sum(sum(1 for row in chapter if row and row.strip() not in TTS_SML.values()) for chapter in session['chapters'])
         if total_sentences == 0:
             error = 'No sentences found!'
             print(error)
@@ -1485,13 +1485,13 @@ def convert_chapters2audio(id):
                         # Update sentence_number and progress bar for skipped chapter
                         sentences = session['chapters'][x]
                         for sentence in sentences:
-                            if sentence.strip() not in TTS_SML.values():
+                            if sentence and sentence.strip() not in TTS_SML.values():
                                 sentence_number += 1
                             t.update(1)
                         continue
 
                 sentences = session['chapters'][x]
-                sentences_count = sum(1 for row in sentences if row.strip() not in TTS_SML.values())
+                sentences_count = sum(1 for row in sentences if row and row.strip() not in TTS_SML.values())
                 start = sentence_number
                 msg = f'Block {chapter_num} containing {sentences_count} sentences...'
                 print(msg)
@@ -1504,6 +1504,10 @@ def convert_chapters2audio(id):
                         if sentence_number <= resume_sentence and sentence_number > 0:
                             msg = f'**Recovering missing file sentence {sentence_number}'
                             print(msg)
+                        # Skip None sentences
+                        if sentence is None:
+                            t.update(1)
+                            continue
                         sentence = sentence.strip()
                         success = tts_manager.convert_sentence2audio(sentence_number, sentence) if sentence else True
                         if success:
@@ -1516,7 +1520,7 @@ def convert_chapters2audio(id):
                             print(msg)
                         else:
                             return False
-                    if sentence.strip() not in TTS_SML.values():
+                    if sentence and sentence.strip() not in TTS_SML.values():
                         sentence_number += 1
                     t.update(1)  # advance for every iteration, including SML
                 end = sentence_number - 1 if sentence_number > 1 else sentence_number
