@@ -78,7 +78,7 @@ class CheckpointManager:
                 "fine_tuned": self.session.get('fine_tuned'),
                 "device": self.session.get('device'),
                 "metadata": self._serialize_dict(self.session.get('metadata', {})),
-                "toc": self.session.get('toc'),
+                # Don't save 'toc' as it contains non-serializable Link objects from ebooklib
                 "cover": self.session.get('cover'),
                 "chapters_dir": self.session.get('chapters_dir'),
                 "chapters_dir_sentences": self.session.get('chapters_dir_sentences'),
@@ -94,6 +94,8 @@ class CheckpointManager:
                 checkpoint_data['chapters_sentences'] = [
                     len(chapter) for chapter in self.session['chapters']
                 ]
+                # Store list of successfully converted chapters
+                checkpoint_data['converted_chapters'] = self.session.get('converted_chapters', [])
 
             # Add any additional data
             if additional_data:
@@ -148,14 +150,15 @@ class CheckpointManager:
             if not checkpoint_data:
                 return False
 
-            # Restore session fields
+            # Restore session fields (excluding 'toc' as it contains non-serializable objects)
             restore_fields = [
                 'epub_path', 'filename_noext', 'language', 'language_iso1',
                 'tts_engine', 'voice', 'custom_model', 'temperature', 'length_penalty',
                 'num_beams', 'repetition_penalty', 'top_k', 'top_p', 'speed',
                 'enable_text_splitting', 'text_temp', 'waveform_temp',
                 'output_format', 'output_split', 'output_split_hours',
-                'fine_tuned', 'device', 'toc', 'cover', 'final_name', 'audiobook'
+                'fine_tuned', 'device', 'cover', 'final_name', 'audiobook',
+                'converted_chapters'
             ]
 
             for field in restore_fields:
@@ -211,6 +214,120 @@ class CheckpointManager:
             return True
         except Exception as e:
             print(f"Warning: Failed to delete checkpoint: {e}")
+            return False
+
+    def scan_existing_chapters(self) -> Dict[str, Any]:
+        """
+        Scan chapters directory to detect already converted audio files.
+        Useful when chapters were manually copied from another session.
+
+        Returns:
+            dict: Information about found chapters including:
+                - found_chapters: List of chapter numbers found
+                - total_found: Count of chapters found
+                - chapter_files: Dict mapping chapter number to file path
+        """
+        result = {
+            'found_chapters': [],
+            'total_found': 0,
+            'chapter_files': {},
+            'scan_successful': False
+        }
+
+        try:
+            chapters_dir = self.session.get('chapters_dir')
+            if not chapters_dir or not os.path.exists(chapters_dir):
+                print(f"⚠️ Chapters directory not found: {chapters_dir}")
+                return result
+
+            # Scan for chapter files (supports .flac, .wav, .mp3, .opus)
+            audio_extensions = ['.flac', '.wav', '.mp3', '.opus', '.m4a']
+            chapter_pattern = r'chapter_(\d+)\.'
+
+            import re
+            for filename in os.listdir(chapters_dir):
+                filepath = os.path.join(chapters_dir, filename)
+
+                # Skip if not a file
+                if not os.path.isfile(filepath):
+                    continue
+
+                # Check if it's an audio file
+                _, ext = os.path.splitext(filename)
+                if ext.lower() not in audio_extensions:
+                    continue
+
+                # Extract chapter number
+                match = re.match(chapter_pattern, filename)
+                if match:
+                    chapter_num = int(match.group(1))
+                    result['found_chapters'].append(chapter_num)
+                    result['chapter_files'][chapter_num] = filepath
+
+            # Sort chapter numbers
+            result['found_chapters'].sort()
+            result['total_found'] = len(result['found_chapters'])
+            result['scan_successful'] = True
+
+            print(f"✓ Scanned chapters directory: Found {result['total_found']} converted chapters")
+            if result['found_chapters']:
+                print(f"  Chapters found: {result['found_chapters']}")
+
+            return result
+
+        except Exception as e:
+            print(f"❌ Error scanning chapters directory: {e}")
+            return result
+
+    def update_checkpoint_from_scan(self) -> bool:
+        """
+        Update checkpoint based on scanned chapter files.
+        This allows resuming conversion after manually copying chapters from another session.
+
+        Returns:
+            bool: True if checkpoint was updated successfully
+        """
+        try:
+            scan_result = self.scan_existing_chapters()
+
+            if not scan_result['scan_successful']:
+                print("❌ Failed to scan chapters, cannot update checkpoint")
+                return False
+
+            if scan_result['total_found'] == 0:
+                print("ℹ️ No existing chapters found, starting from scratch")
+                return True
+
+            # Update session's converted_chapters list
+            self.session['converted_chapters'] = scan_result['found_chapters']
+
+            # Determine last completed chapter
+            last_chapter = max(scan_result['found_chapters']) if scan_result['found_chapters'] else 0
+
+            # Get total chapters if available (handle None case)
+            chapters = self.session.get('chapters')
+            total_chapters = len(chapters) if chapters else 0
+
+            # Save updated checkpoint
+            additional_data = {
+                'last_completed_chapter': last_chapter,
+                'total_chapters': total_chapters,
+                'scanned': True,
+                'scan_timestamp': datetime.now().isoformat()
+            }
+
+            success = self.save_checkpoint('audio_conversion_in_progress', additional_data)
+
+            if success:
+                print(f"✅ Checkpoint updated from scan:")
+                print(f"   - {scan_result['total_found']} chapters detected")
+                print(f"   - Last completed: Chapter {last_chapter}")
+                print(f"   - Will resume from: Chapter {last_chapter + 1}")
+
+            return success
+
+        except Exception as e:
+            print(f"❌ Error updating checkpoint from scan: {e}")
             return False
 
     @staticmethod

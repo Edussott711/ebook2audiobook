@@ -1,4 +1,6 @@
 torch<2.9
+numpy>=1.26.0,<2.1.0
+pandas>=2.2.0
 argostranslate
 beautifulsoup4
 cutlet

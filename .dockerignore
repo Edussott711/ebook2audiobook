@@ -1,25 +1,96 @@
-# Ignore Git repository files
+# OPTIMIZATION: Exclude unnecessary files from Docker build context
+# This significantly speeds up docker build by reducing context size
+
+# Git repository files (large, not needed in image)
 .git/
+.gitignore
+.gitattributes
 
-# Ignore Docker-related files (not needed in the image)
-# Dockerfile
-# .dockerignore
+# Docker-related files (not needed in image)
+# Dockerfile  # Keep commented to allow COPY . to work
+# .dockerignore  # Keep commented to allow COPY . to work
 
-# Ignore cache and temporary files
+# Cache and temporary files (reduce context size)
 .cache
 tmp/*
+*.tmp
+*.temp
+temp/
 
 # Ignore all files and subdirectories in models/ EXCEPT version.txt
 models/*
 !models/version.txt
 
-# Ignore virtual environments (if using venv)
+# Virtual environments (if using venv) - LARGE directories!
 python_env/
+venv/
+env/
+ENV/
 
-# Ignore compiled Python bytecode
+# Compiled Python bytecode (regenerated in container)
 **/__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Ignore specific directories inside the `audiobooks` project
+# Specific audiobook output directories (can be HUGE)
 audiobooks/cli/*
 audiobooks/gui/gradio/*
 audiobooks/gui/host/*
+
+# Session data (not needed in fresh image)
+sessions/
+.sessions/
+*.session
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation (not needed at runtime)
+*.md
+!README.md
+docs/
+documentation/
+
+# Test files (not needed in production)
+tests/
+test/
+*.test.*
+*.spec.*
+.pytest_cache/
+
+# CI/CD configs (not needed in image)
+.github/
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# Logs
+*.log
+logs/
+
+# Large audio/video files (shouldn't be in source anyway)
+*.mp3
+*.wav
+*.m4b
+*.opus
+*.flac
+
+# Python packaging
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
