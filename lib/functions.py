@@ -3117,6 +3117,7 @@ def web_interface(args, ctx):
             return outputs
 
         def change_gr_ebook_file(data, id):
+            import time
             try:
                 session = context.get_session(id)
                 session['ebook'] = None
@@ -3126,6 +3127,20 @@ def web_interface(args, ctx):
                         session['cancellation_requested'] = True
                         msg = 'Cancellation requested, please wait...'
                         yield gr.update(value=show_modal('wait', msg),visible=True)
+
+                        # Wait for conversion to actually stop
+                        max_wait = 30  # Maximum 30 seconds
+                        waited = 0
+                        while session['status'] == 'converting' and waited < max_wait:
+                            time.sleep(0.5)
+                            waited += 0.5
+                            session = context.get_session(id)  # Refresh session
+
+                        # Ensure status is reset
+                        if session['status'] == 'converting':
+                            session['status'] = 'ready'
+
+                        yield gr.update(visible=False)
                         return
                 if isinstance(data, list):
                     session['ebook_list'] = data
