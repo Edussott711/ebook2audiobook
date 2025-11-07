@@ -3086,7 +3086,7 @@ def web_interface(args, ctx):
             session['audiobook'] = selected
             if selected is not None:
                 audio_info = mediainfo(selected)
-                session['duration'] = float(audio_info['duration'])
+                session['duration'] = float(audio_info.get('duration', 0))
             visible = True if len(audiobook_options) else False
             return gr.update(value=selected), gr.update(value=selected), gr.update(value=load_vtt_data(selected)), gr.update(visible=visible)
         
