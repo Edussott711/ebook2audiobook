@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  # Master (Serveur/Coordinator)
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ebook2audio-master
+    environment:
+      # Configuration workers (IP:PORT séparés par virgules)
+      - WORKER_NODES=worker1:8000,worker2:8000,worker3:8000
+      - DISTRIBUTED_MODE=client-server
+      - LOG_LEVEL=INFO
+    ports:
+      - "7860:7860"  # Gradio UI (optionnel)
+      - "5000:5000"  # API Master (optionnel)
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./models:/app/models
+    networks:
+      - ebook-net
+    command: >
+      sh -c "echo 'Waiting for workers...' &&
+             sleep 10 &&
+             python app.py --script_mode gradio"
+    restart: unless-stopped
+
+  # Worker 1
+  worker1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: ebook2audio-worker1
+    environment:
+      - WORKER_PORT=8000
+      - WORKER_ID=worker1
+      - CUDA_VISIBLE_DEVICES=0
+      - TTS_MODEL=xtts
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./models:/app/models
+    networks:
+      - ebook-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Worker 2
+  worker2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: ebook2audio-worker2
+    environment:
+      - WORKER_PORT=8000
+      - WORKER_ID=worker2
+      - CUDA_VISIBLE_DEVICES=1
+      - TTS_MODEL=xtts
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./models:/app/models
+    networks:
+      - ebook-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Worker 3 (optionnel - commenter si pas de 3ème GPU)
+  worker3:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: ebook2audio-worker3
+    environment:
+      - WORKER_PORT=8000
+      - WORKER_ID=worker3
+      - CUDA_VISIBLE_DEVICES=2
+      - TTS_MODEL=xtts
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./models:/app/models
+    networks:
+      - ebook-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2']
+              capabilities: [gpu]
+    restart: unless-stopped
+
+networks:
+  ebook-net:
+    driver: bridge
+
+# Notes de déploiement:
+#
+# 1. Ajuster le nombre de workers:
+#    - Commenter/décommenter les sections worker selon vos GPUs
+#    - Mettre à jour WORKER_NODES dans master en conséquence
+#
+# 2. Multi-machines:
+#    - Lancer workers sur machines séparées
+#    - Configurer WORKER_NODES avec IPs réelles:
+#      WORKER_NODES=192.168.1.10:8000,192.168.1.11:8000
+#
+# 3. CPU uniquement (pas de GPU):
+#    - Retirer la section deploy > resources > reservations
+#    - Retirer CUDA_VISIBLE_DEVICES
+#
+# 4. Scaling:
+#    Pour ajouter plus de workers:
+#    docker-compose -f docker-compose.client-server.yml up -d --scale worker=5
+#    (nécessite template worker sans device_ids fixe)
