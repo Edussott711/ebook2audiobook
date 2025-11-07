@@ -39,6 +39,9 @@ from lib.classes.voice_extractor import VoiceExtractor
 from lib.classes.tts_manager import TTSManager
 from lib.checkpoint_manager import CheckpointManager
 from lib.session_persistence import SessionPersistence
+# Import refactored SRP modules
+from lib.audio.converter import convert_chapters2audio
+from lib.audio.exporter import combine_audio_chapters
 #from lib.classes.redirect_console import RedirectConsole
 #from lib.classes.argos_translator import ArgosTranslator
 
@@ -1400,7 +1403,11 @@ def normalize_text(text, lang, lang_iso1, tts_engine):
     text = ' '.join(text.split())
     return text
 
-def convert_chapters2audio(id):
+def convert_chapters2audio_legacy(id):
+    """
+    DEPRECATED: Legacy monolithic version kept for reference.
+    Use lib.audio.converter.convert_chapters2audio() instead (refactored SRP version).
+    """
     session = context.get_session(id)
     try:
         if session['cancellation_requested']:
@@ -1640,7 +1647,11 @@ def combine_audio_sentences(chapter_audio_file, start, end, session):
         DependencyError(e)
         return False
 
-def combine_audio_chapters(id):
+def combine_audio_chapters_legacy(id):
+    """
+    DEPRECATED: Legacy monolithic version kept for reference.
+    Use lib.audio.exporter.combine_audio_chapters() instead (refactored SRP version).
+    """
 
     def get_audio_duration(filepath):
         try:
