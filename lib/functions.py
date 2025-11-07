@@ -3548,10 +3548,13 @@ def web_interface(args, ctx):
 
                 if same_tab_reconnecting or len(active_sessions) == 0:
                     restore_session_from_data(data, session)
-                    # Always reset status to None when reconnecting to allow UI to connect
-                    # If a conversion is truly running in background, it will update the status
-                    # This prevents blocking legitimate reconnections (page refresh, etc.)
-                    session['status'] = None
+                    # Reset status to None in these cases to allow reconnection:
+                    # 1. Not converting, OR
+                    # 2. Fresh server start (session didn't exist before = Docker restarted), OR
+                    # 3. No active sockets (all clients disconnected)
+                    # Otherwise, keep status to preserve active conversion state
+                    if not was_converting or not session_existed or has_no_active_sockets:
+                        session['status'] = None
 
                 # Block only if it's NOT a reconnection AND start_session fails
                 if not same_tab_reconnecting and not has_no_active_sockets and not ctx_tracker.start_session(session['id']):
@@ -3581,9 +3584,15 @@ def web_interface(args, ctx):
                 if session['audiobook'] is not None:
                     if not os.path.exists(session['audiobook']):
                         session['audiobook'] = None
-                # Note: Status has been reset to None to allow UI reconnection
-                # If a background conversion is truly running, it will update the status accordingly
-                # If the conversion completed while disconnected, the status will already be set correctly by the process
+                # If conversion was in progress and is still ongoing, keep it as 'converting'
+                # If it completed while disconnected, it will already be 'ready' from the conversion process
+                if was_converting and session['status'] == 'converting':
+                    # Conversion is still in progress, keep status
+                    pass
+                elif was_converting and session['status'] != 'converting':
+                    # Conversion completed while disconnected, ensure status is correct
+                    if session['status'] != 'ready':
+                        session['status'] = 'ready'
                 session['system'] = (f"{platform.system()}-{platform.release()}").lower()
                 session['custom_model_dir'] = os.path.join(models_dir, '__sessions', f"model-{session['id']}")
                 session['voice_dir'] = os.path.join(voices_dir, '__sessions', f"voice-{session['id']}", session['language'])
