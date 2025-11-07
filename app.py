@@ -168,7 +168,8 @@ Tip: to add of silence (1.4 seconds) into your text just use "###" or "[pause]".
         '--custom_model', '--fine_tuned', '--output_format',
         '--temperature', '--length_penalty', '--num_beams', '--repetition_penalty', '--top_k', '--top_p', '--speed', '--enable_text_splitting',
         '--text_temp', '--waveform_temp',
-        '--output_dir', '--force_restart', '--version', '--workflow', '--help'
+        '--output_dir', '--force_restart', '--version', '--workflow', '--help',
+        '--distributed', '--num_workers', '--redis_url', '--storage_type', '--storage_path', '--worker_mode'
     ]
     tts_engine_list_keys = [k for k in TTS_ENGINES.keys()]
     tts_engine_list_values = [k for k in TTS_ENGINES.values()]
@@ -221,6 +222,15 @@ Tip: to add of silence (1.4 seconds) into your text just use "###" or "[pause]".
     headless_optional_group.add_argument(options[24], action='store_true', help='''(Optional) Force restart from beginning, ignoring any existing checkpoint.''')
     headless_optional_group.add_argument(options[25], action='version', version=f'ebook2audiobook version {prog_version}', help='''Show the version of the script and exit''')
     headless_optional_group.add_argument(options[26], action='store_true', help=argparse.SUPPRESS)
+
+    # Distributed mode options
+    distributed_group = parser.add_argument_group('**** Distributed Mode Options (for multi-machine parallelism)', 'Optional')
+    distributed_group.add_argument(options[27], action='store_true', help='''(Optional) Enable distributed processing mode using Celery + Redis.''')
+    distributed_group.add_argument(options[28], type=int, default=1, help='''(Optional) Number of workers for distributed processing. Default: 1.''')
+    distributed_group.add_argument(options[29], type=str, default='redis://localhost:6379/0', help='''(Optional) Redis URL for distributed coordination. Default: redis://localhost:6379/0.''')
+    distributed_group.add_argument(options[30], type=str, default='local', choices=['local', 'nfs', 's3'], help='''(Optional) Shared storage type for audio files. Default: local.''')
+    distributed_group.add_argument(options[31], type=str, default='/tmp/shared', help='''(Optional) Shared storage path. Default: /tmp/shared.''')
+    distributed_group.add_argument(options[32], action='store_true', help='''(Optional) Start as a Celery worker (not coordinator).''')
     
     for arg in sys.argv:
         if arg.startswith('--') and arg not in options:
@@ -262,6 +272,16 @@ Tip: to add of silence (1.4 seconds) into your text just use "###" or "[pause]".
 
         from lib.functions import SessionContext, convert_ebook_batch, convert_ebook, web_interface
         ctx = SessionContext()
+
+        # Check if starting as worker
+        if args.get('worker_mode', False):
+            print("Starting Celery worker...")
+            from lib.distributed.worker import start_worker
+            worker_id = os.getenv('WORKER_ID', 'worker_1')
+            gpu_id = os.getenv('CUDA_VISIBLE_DEVICES')
+            start_worker(worker_id=worker_id, gpu_id=gpu_id)
+            return  # Exit after worker stops
+
         # Conditions based on the --headless flag
         if args['headless']:
             args['is_gui_process'] = False

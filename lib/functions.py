@@ -2185,7 +2185,62 @@ def convert_ebook(args, ctx=None):
                                     checkpoint_mgr.save_checkpoint('chapters_extracted')
                                 session['final_name'] = get_sanitized(session['metadata']['title'] + '.' + session['output_format'])
                                 if session['chapters'] is not None:
-                                    if convert_chapters2audio(id):
+                                    # Check if distributed mode is enabled
+                                    use_distributed = args.get('distributed', False)
+
+                                    if use_distributed:
+                                        # DISTRIBUTED MODE
+                                        try:
+                                            from lib.distributed.coordinator import DistributedCoordinator
+
+                                            logger.info(f"Using distributed mode with {args.get('num_workers', 1)} workers")
+
+                                            # Initialize coordinator
+                                            coordinator = DistributedCoordinator(
+                                                session_id=id,
+                                                num_workers=args.get('num_workers', 1),
+                                                redis_url=args.get('redis_url'),
+                                                storage_type=args.get('storage_type', 'local'),
+                                                storage_path=args.get('storage_path', '/tmp/shared')
+                                            )
+
+                                            # Prepare TTS config
+                                            tts_config = {
+                                                'model_name': session['tts_engine'],
+                                                'voice_name': session['voice'],
+                                                'language': session['language'],
+                                                'custom_model': session.get('custom_model'),
+                                                'device': session['device'],
+                                                'temperature': session.get('temperature'),
+                                                'speed': session.get('speed'),
+                                            }
+
+                                            # Distribute chapters
+                                            result = coordinator.distribute_chapters(
+                                                session['chapters'],
+                                                tts_config,
+                                                resume=bool(checkpoint_info and checkpoint_info.get('stage') == 'audio_conversion_in_progress')
+                                            )
+
+                                            # Wait and get audio paths
+                                            chapter_audio_paths = coordinator.wait_and_aggregate(result)
+
+                                            # Combine chapters into final audiobook
+                                            session['audiobook_temp'] = os.path.join(session['chapters_dir'], 'combined_temp.mp3')
+                                            coordinator.combine_audio_files(chapter_audio_paths, session['audiobook_temp'])
+
+                                            conversion_success = True
+                                            logger.info("Distributed conversion completed successfully")
+
+                                        except Exception as e:
+                                            logger.error(f"Distributed mode failed: {e}")
+                                            logger.info("Falling back to sequential mode")
+                                            conversion_success = convert_chapters2audio(id)
+                                    else:
+                                        # SEQUENTIAL MODE (original)
+                                        conversion_success = convert_chapters2audio(id)
+
+                                    if conversion_success:
                                         checkpoint_mgr.save_checkpoint('audio_converted')
                                         msg = 'Conversion successful. Combining sentences and chapters...'
                                         show_alert({"type": "info", "msg": msg})
