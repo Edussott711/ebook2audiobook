@@ -2863,10 +2863,11 @@ def web_interface(args, ctx):
             try:
                 session = context.get_session(id)
                 socket_hash = req.session_hash
-                if not session.get(socket_hash):
-                    outputs = tuple([gr.update() for _ in range(24)])
-                    return outputs
-                session = context.get_session(id)
+                # Don't check socket_hash - it may not exist yet during reconnection
+                # The session itself is enough to restore the interface
+                # if not session.get(socket_hash):
+                #     outputs = tuple([gr.update() for _ in range(24)])
+                #     return outputs
                 ebook_data = None
                 file_count = session['ebook_mode']
                 if isinstance(session['ebook_list'], list) and file_count == 'directory':
