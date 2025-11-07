@@ -2863,10 +2863,11 @@ def web_interface(args, ctx):
             try:
                 session = context.get_session(id)
                 socket_hash = req.session_hash
-                if not session.get(socket_hash):
-                    outputs = tuple([gr.update() for _ in range(24)])
-                    return outputs
-                session = context.get_session(id)
+                # Don't check socket_hash - it may not exist yet during reconnection
+                # The session itself is enough to restore the interface
+                # if not session.get(socket_hash):
+                #     outputs = tuple([gr.update() for _ in range(24)])
+                #     return outputs
                 ebook_data = None
                 file_count = session['ebook_mode']
                 if isinstance(session['ebook_list'], list) and file_count == 'directory':
@@ -3206,12 +3207,20 @@ def web_interface(args, ctx):
             try:
                 nonlocal tts_engine_options
                 session = context.get_session(id)
+                # Ensure language is set, use default if not
+                if not session.get('language'):
+                    session['language'] = default_language_code
                 tts_engine_options = get_compatible_tts_engines(session['language'])
-                session['tts_engine'] = session['tts_engine'] if session['tts_engine'] in tts_engine_options else tts_engine_options[0]
-                return gr.update(choices=tts_engine_options, value=session['tts_engine'])
+                # Only update tts_engine if options are available
+                if len(tts_engine_options) > 0:
+                    session['tts_engine'] = session['tts_engine'] if session['tts_engine'] in tts_engine_options else tts_engine_options[0]
+                    return gr.update(choices=tts_engine_options, value=session['tts_engine'])
+                else:
+                    # Fallback to default if no options
+                    return gr.update(choices=[], value=None)
             except Exception as e:
                 error = f'update_gr_tts_engine_list(): {e}!'
-                alert_exception(error)              
+                alert_exception(error)
                 return gr.update()
 
         def update_gr_custom_model_list(id):
@@ -3489,6 +3498,9 @@ def web_interface(args, ctx):
             try:
                 nonlocal audiobook_options
                 session = context.get_session(id)
+                # Check if audiobooks_dir is initialized before using it
+                if not session.get('audiobooks_dir') or not os.path.exists(session['audiobooks_dir']):
+                    return gr.update(choices=[], value=None)
                 audiobook_options = [
                     (f, os.path.join(session['audiobooks_dir'], str(f)))
                     for f in os.listdir(session['audiobooks_dir'])
@@ -3537,10 +3549,13 @@ def web_interface(args, ctx):
 
                 if same_tab_reconnecting or len(active_sessions) == 0:
                     restore_session_from_data(data, session)
-                    # Always reset status to None when reconnecting to allow UI to connect
-                    # If a conversion is truly running in background, it will update the status
-                    # This prevents blocking legitimate reconnections (page refresh, etc.)
-                    session['status'] = None
+                    # Reset status to None in these cases to allow reconnection:
+                    # 1. Not converting, OR
+                    # 2. Fresh server start (session didn't exist before = Docker restarted), OR
+                    # 3. No active sockets (all clients disconnected)
+                    # Otherwise, keep status to preserve active conversion state
+                    if not was_converting or not session_existed or has_no_active_sockets:
+                        session['status'] = None
 
                 # Block only if it's NOT a reconnection AND start_session fails
                 if not same_tab_reconnecting and not has_no_active_sockets and not ctx_tracker.start_session(session['id']):
@@ -3570,9 +3585,15 @@ def web_interface(args, ctx):
                 if session['audiobook'] is not None:
                     if not os.path.exists(session['audiobook']):
                         session['audiobook'] = None
-                # Note: Status has been reset to None to allow UI reconnection
-                # If a background conversion is truly running, it will update the status accordingly
-                # If the conversion completed while disconnected, the status will already be set correctly by the process
+                # If conversion was in progress and is still ongoing, keep it as 'converting'
+                # If it completed while disconnected, it will already be 'ready' from the conversion process
+                if was_converting and session['status'] == 'converting':
+                    # Conversion is still in progress, keep status
+                    pass
+                elif was_converting and session['status'] != 'converting':
+                    # Conversion completed while disconnected, ensure status is correct
+                    if session['status'] != 'ready':
+                        session['status'] = 'ready'
                 session['system'] = (f"{platform.system()}-{platform.release()}").lower()
                 session['custom_model_dir'] = os.path.join(models_dir, '__sessions', f"model-{session['id']}")
                 session['voice_dir'] = os.path.join(voices_dir, '__sessions', f"voice-{session['id']}", session['language'])
