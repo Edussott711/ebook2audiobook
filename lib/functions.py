@@ -1550,10 +1550,45 @@ def convert_chapters2audio(id):
         DependencyError(e)
         return False
 
-def assemble_chunks(txt_file, out_file):
+def parse_ffmpeg_progress(line, total_duration=None):
+    """
+    Parse FFmpeg progress line to extract time and calculate percentage.
+    Returns (current_time_seconds, percentage) or (None, None) if not a progress line.
+    """
+    import re
+    # FFmpeg progress line format: time=HH:MM:SS.MS or time=SS.MS
+    time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
+    if not time_match:
+        time_match = re.search(r'time=(\d+\.\d+)', line)
+        if time_match:
+            current_time = float(time_match.group(1))
+        else:
+            return None, None
+    else:
+        hours = int(time_match.group(1))
+        minutes = int(time_match.group(2))
+        seconds = float(time_match.group(3))
+        current_time = hours * 3600 + minutes * 60 + seconds
+
+    percentage = None
+    if total_duration and total_duration > 0:
+        percentage = min((current_time / total_duration) * 100, 100)
+
+    return current_time, percentage
+
+def assemble_chunks(txt_file, out_file, show_progress=True, progress_prefix="Concaténation"):
+    """
+    Assemble audio chunks using FFmpeg concat demuxer.
+
+    Args:
+        txt_file: Path to text file listing audio files to concatenate
+        out_file: Path to output audio file
+        show_progress: Whether to show progress messages (default: True)
+        progress_prefix: Prefix for progress messages (default: "Concaténation")
+    """
     try:
         ffmpeg_cmd = [
-            shutil.which('ffmpeg'), '-hide_banner', '-nostats', '-y',
+            shutil.which('ffmpeg'), '-hide_banner', '-stats', '-y',
             '-safe', '0', '-f', 'concat', '-i', txt_file,
             '-c:a', default_audio_proc_format, '-map_metadata', '-1', '-threads', '1', out_file
         ]
@@ -1565,10 +1600,30 @@ def assemble_chunks(txt_file, out_file):
             encoding='utf-8',
             errors='ignore'
         )
+
+        last_percentage = -1
         for line in process.stdout:
-            print(line, end='')  # Print each line of stdout
+            if show_progress:
+                # Try to parse progress
+                current_time, percentage = parse_ffmpeg_progress(line)
+                if percentage is not None:
+                    # Only print when percentage changes by at least 1%
+                    if int(percentage) > last_percentage:
+                        last_percentage = int(percentage)
+                        print(f"\r{progress_prefix}: {last_percentage}%", end='', flush=True)
+                elif 'time=' in line:
+                    # Show progress even without total duration
+                    print(f"\r{progress_prefix} en cours...", end='', flush=True)
+            else:
+                print(line, end='')  # Print each line of stdout
+
+        if show_progress and last_percentage >= 0:
+            print()  # New line after progress
+
         process.wait()
         if process.returncode == 0:
+            if show_progress:
+                print(f"✓ {progress_prefix} terminée")
             return True
         else:
             error = process.returncode
@@ -1613,8 +1668,10 @@ def combine_audio_sentences(chapter_audio_file, start, end, session):
                         f.write(f"file '{file.replace(os.sep, '/')}'\n")
                 chunk_list.append((txt, out))
             try:
+                # Disable progress for parallel batch processing
+                chunk_list_with_flags = [(txt, out, False, "") for txt, out in chunk_list]
                 with Pool(cpu_count()) as pool:
-                    results = pool.starmap(assemble_chunks, chunk_list)
+                    results = pool.starmap(assemble_chunks, chunk_list_with_flags)
             except Exception as e:
                 error = f"combine_audio_sentences() multiprocessing error: {e}"
                 print(error)
@@ -1628,7 +1685,8 @@ def combine_audio_sentences(chapter_audio_file, start, end, session):
             with open(final_list, 'w') as f:
                 for _, chunk_path in chunk_list:
                     f.write(f"file '{chunk_path.replace(os.sep, '/')}'\n")
-            if assemble_chunks(final_list, chapter_audio_file):
+            print(f"Fusion finale des phrases pour le chapitre...")
+            if assemble_chunks(final_list, chapter_audio_file, show_progress=True, progress_prefix="Fusion chapitre"):
                 msg = f'********* Combined block audio file saved in {chapter_audio_file}'
                 print(msg)
                 return True
@@ -1747,6 +1805,28 @@ def combine_audio_chapters(id):
                     ffmpeg_cmd += ['-c:a', 'libopus', '-compression_level', '0', '-b:a', '192k', '-ar', '48000']
                 ffmpeg_cmd += ['-map_metadata', '1']
             ffmpeg_cmd += ['-af', 'loudnorm=I=-16:LRA=11:TP=-1.5,afftdn=nf=-70', '-strict', 'experimental', '-threads', '1', '-y', ffmpeg_final_file]
+
+            # Get total duration for progress calculation
+            total_duration = None
+            try:
+                ffprobe_cmd = [
+                    shutil.which('ffprobe'),
+                    '-v', 'error',
+                    '-show_entries', 'format=duration',
+                    '-of', 'json',
+                    ffmpeg_combined_audio
+                ]
+                result = subprocess.run(ffprobe_cmd, capture_output=True, text=True)
+                total_duration = float(json.loads(result.stdout)['format']['duration'])
+            except Exception:
+                pass  # Continue without duration
+
+            print(f"\n{'='*60}")
+            print(f"Export final de l'audiobook en cours...")
+            print(f"Format: {session['output_format'].upper()}")
+            print(f"Normalisation audio et application des métadonnées...")
+            print(f"{'='*60}\n")
+
             process = subprocess.Popen(
                 ffmpeg_cmd,
                 env={},
@@ -1755,10 +1835,30 @@ def combine_audio_chapters(id):
                 encoding='utf-8',
                 errors='ignore'
             )
+
+            last_percentage = -1
+            current_time = None
             for line in process.stdout:
-                print(line, end='')
+                # Try to parse progress
+                current_time, percentage = parse_ffmpeg_progress(line, total_duration)
+                if percentage is not None:
+                    # Only print when percentage changes by at least 1%
+                    if int(percentage) > last_percentage:
+                        last_percentage = int(percentage)
+                        print(f"\rExport et normalisation: {last_percentage}%", end='', flush=True)
+                elif 'time=' in line and current_time is not None:
+                    # Show progress even without total duration
+                    mins = int(current_time // 60)
+                    secs = int(current_time % 60)
+                    print(f"\rExport en cours... {mins:02d}:{secs:02d} traités", end='', flush=True)
+
+            if last_percentage >= 0 or current_time:
+                print()  # New line after progress
+
             process.wait()
             if process.returncode == 0:
+                print(f"\n✓ Export terminé avec succès !")
+                print(f"{'='*60}\n")
                 if session['output_format'] in ['mp3', 'm4a', 'm4b', 'mp4']:
                     if session['cover'] is not None:
                         cover_path = session['cover']
@@ -1841,6 +1941,11 @@ def combine_audio_chapters(id):
                 part_chapter_indices.append(cur_indices)
 
             for part_idx, (part_file_list, indices) in enumerate(zip(part_files, part_chapter_indices)):
+                print(f"\n{'='*60}")
+                print(f"Traitement de la partie {part_idx+1}/{len(part_files)}")
+                print(f"Nombre de chapitres: {len(part_file_list)}")
+                print(f"{'='*60}\n")
+
                 with tempfile.TemporaryDirectory() as tmpdir:
                     batch_size = 1024
                     chunk_list = []
@@ -1853,12 +1958,17 @@ def combine_audio_chapters(id):
                                 path = os.path.join(session['chapters_dir'], file).replace("\\", "/")
                                 f.write(f"file '{path}'\n")
                         chunk_list.append((txt, out))
+
+                    # Disable progress for parallel batch processing
+                    chunk_list_with_flags = [(txt, out, False, "") for txt, out in chunk_list]
                     with Pool(cpu_count()) as pool:
-                        results = pool.starmap(assemble_chunks, chunk_list)
+                        results = pool.starmap(assemble_chunks, chunk_list_with_flags)
                     if not all(results):
                         print(f"assemble_segments() One or more chunks failed for part {part_idx+1}.")
                         return None
+
                     # Final merge for this part
+                    print(f"\nConcaténation finale des chapitres pour la partie {part_idx+1}...")
                     combined_chapters_file = os.path.join(
                         session['process_dir'],
                         f"{get_sanitized(session['metadata']['title'])}_part{part_idx+1}.{default_audio_proc_format}" if needs_split else f"{get_sanitized(session['metadata']['title'])}.{default_audio_proc_format}"
@@ -1867,13 +1977,15 @@ def combine_audio_chapters(id):
                     with open(final_list, 'w') as f:
                         for _, chunk_path in chunk_list:
                             f.write(f"file '{chunk_path.replace(os.sep, '/')}'\n")
-                    if not assemble_chunks(final_list, combined_chapters_file):
+                    if not assemble_chunks(final_list, combined_chapters_file, show_progress=True, progress_prefix=f"Concaténation partie {part_idx+1}"):
                         print(f"assemble_segments() Final merge failed for part {part_idx+1}.")
                         return None
 
+                    print(f"\nGénération des métadonnées pour la partie {part_idx+1}...")
                     metadata_file = os.path.join(session['process_dir'], f'metadata_part{part_idx+1}.txt')
                     part_chapters = [(chapter_files[i], chapter_titles[i]) for i in indices]
                     generate_ffmpeg_metadata(part_chapters, session, metadata_file, default_audio_proc_format)
+                    print(f"✓ Métadonnées générées")
 
                     final_file = os.path.join(
                         session['audiobooks_dir'],
@@ -1882,6 +1994,11 @@ def combine_audio_chapters(id):
                     if export_audio(combined_chapters_file, metadata_file, final_file):
                         exported_files.append(final_file)
         else:
+            print(f"\n{'='*60}")
+            print(f"Concaténation finale de tous les chapitres")
+            print(f"Nombre total de chapitres: {len(chapter_files)}")
+            print(f"{'='*60}\n")
+
             with tempfile.TemporaryDirectory() as tmpdir:
                 # 1) build a single ffmpeg file list
                 txt = os.path.join(tmpdir, 'all_chapters.txt')
@@ -1892,14 +2009,17 @@ def combine_audio_chapters(id):
                         f.write(f"file '{path}'\n")
 
                 # 2) merge into one temp file
-                if not assemble_chunks(txt, merged_tmp):
+                print(f"Début de la concaténation de {len(chapter_files)} chapitres...")
+                if not assemble_chunks(txt, merged_tmp, show_progress=True, progress_prefix="Concaténation chapitres"):
                     print("assemble_segments() Final merge failed.")
                     return None
 
                 # 3) generate metadata for entire book
+                print(f"\nGénération des métadonnées FFmpeg...")
                 metadata_file = os.path.join(session['process_dir'], 'metadata.txt')
                 all_chapters = list(zip(chapter_files, chapter_titles))
                 generate_ffmpeg_metadata(all_chapters, session, metadata_file, default_audio_proc_format)
+                print(f"✓ Métadonnées générées")
 
                 # 4) export in one go
                 final_file = os.path.join(
