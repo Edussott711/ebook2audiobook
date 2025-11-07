@@ -322,6 +322,8 @@ class SessionPersistence:
         Keeps only the N most recent incomplete sessions.
         Removes completed sessions older than CLEANUP_COMPLETED_AFTER_HOURS.
 
+        FIX PROBLEM 8: Never delete sessions that are actively converting.
+
         Args:
             keep_incomplete: Number of incomplete sessions to keep (default: MAX_INCOMPLETE_SESSIONS)
         """
@@ -331,31 +333,66 @@ class SessionPersistence:
                 index = self._get_index()
                 sessions = index['sessions']
 
-                # Separate completed and incomplete
-                incomplete = [s for s in sessions if not s.get('completed', False)]
-                completed = [s for s in sessions if s.get('completed', False)]
+                # Separate sessions by status
+                converting = []
+                incomplete = []
+                completed = []
 
-                # Keep only most recent N incomplete sessions
-                sessions_to_keep = incomplete[:keep_incomplete]
+                for s in sessions:
+                    session_id = s.get('id')
+                    if not session_id:
+                        continue
+
+                    # FIX PROBLEM 8: Load actual session data to check real status
+                    # Metadata can be stale, session_data.json is source of truth
+                    session_file = self._get_session_file(session_id)
+                    if session_file.exists():
+                        session_data = self._read_with_lock(session_file)
+                        actual_status = session_data.get('status')
+
+                        # CRITICAL: Never delete converting sessions
+                        if actual_status == 'converting':
+                            converting.append(s)
+                            continue
+
+                    # Categorize by completed flag
+                    if s.get('completed', False):
+                        completed.append(s)
+                    else:
+                        incomplete.append(s)
+
+                # Keep all converting sessions (NEVER delete them)
+                sessions_to_keep = converting.copy()
+
+                # Keep only most recent N incomplete sessions (excluding converting)
+                sessions_to_keep.extend(incomplete[:keep_incomplete])
                 sessions_to_delete = incomplete[keep_incomplete:]
 
                 # Remove old completed sessions
                 cutoff_time = datetime.now() - timedelta(hours=self.CLEANUP_COMPLETED_AFTER_HOURS)
                 for session in completed:
-                    last_access = datetime.fromisoformat(session.get('last_access', ''))
-                    if last_access < cutoff_time:
-                        sessions_to_delete.append(session)
-                    else:
+                    try:
+                        last_access = datetime.fromisoformat(session.get('last_access', ''))
+                        if last_access < cutoff_time:
+                            sessions_to_delete.append(session)
+                        else:
+                            sessions_to_keep.append(session)
+                    except (ValueError, TypeError):
+                        # Invalid date format, keep it to be safe
                         sessions_to_keep.append(session)
 
                 # Delete sessions
                 for session in sessions_to_delete:
-                    print(f"Cleaning up old session: {session['id']} - {session.get('ebook_name', 'Unknown')}")
-                    self.delete_session(session['id'])
+                    session_name = session.get('ebook_name', 'Unknown')
+                    session_id = session['id']
+                    print(f"Cleaning up old session: {session_id[:8]} - {session_name}")
+                    self.delete_session(session_id)
 
-                print(f"Cleanup complete: Kept {len(sessions_to_keep)} sessions, removed {len(sessions_to_delete)} sessions")
+                print(f"Cleanup complete: Kept {len(sessions_to_keep)} sessions ({len(converting)} converting), removed {len(sessions_to_delete)} sessions")
         except Exception as e:
             print(f"Error during cleanup: {e}")
+            import traceback
+            traceback.print_exc()
 
     def session_exists(self, session_id: str) -> bool:
         """Check if session exists on disk."""
