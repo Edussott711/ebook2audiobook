@@ -304,8 +304,9 @@ class CheckpointManager:
             # Determine last completed chapter
             last_chapter = max(scan_result['found_chapters']) if scan_result['found_chapters'] else 0
 
-            # Get total chapters if available
-            total_chapters = len(self.session.get('chapters', []))
+            # Get total chapters if available (handle None case)
+            chapters = self.session.get('chapters')
+            total_chapters = len(chapters) if chapters else 0
 
             # Save updated checkpoint
             additional_data = {
