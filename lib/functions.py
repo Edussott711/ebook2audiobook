@@ -3206,12 +3206,20 @@ def web_interface(args, ctx):
             try:
                 nonlocal tts_engine_options
                 session = context.get_session(id)
+                # Ensure language is set, use default if not
+                if not session.get('language'):
+                    session['language'] = default_language_code
                 tts_engine_options = get_compatible_tts_engines(session['language'])
-                session['tts_engine'] = session['tts_engine'] if session['tts_engine'] in tts_engine_options else tts_engine_options[0]
-                return gr.update(choices=tts_engine_options, value=session['tts_engine'])
+                # Only update tts_engine if options are available
+                if len(tts_engine_options) > 0:
+                    session['tts_engine'] = session['tts_engine'] if session['tts_engine'] in tts_engine_options else tts_engine_options[0]
+                    return gr.update(choices=tts_engine_options, value=session['tts_engine'])
+                else:
+                    # Fallback to default if no options
+                    return gr.update(choices=[], value=None)
             except Exception as e:
                 error = f'update_gr_tts_engine_list(): {e}!'
-                alert_exception(error)              
+                alert_exception(error)
                 return gr.update()
 
         def update_gr_custom_model_list(id):
@@ -3489,6 +3497,9 @@ def web_interface(args, ctx):
             try:
                 nonlocal audiobook_options
                 session = context.get_session(id)
+                # Check if audiobooks_dir is initialized before using it
+                if not session.get('audiobooks_dir') or not os.path.exists(session['audiobooks_dir']):
+                    return gr.update(choices=[], value=None)
                 audiobook_options = [
                     (f, os.path.join(session['audiobooks_dir'], str(f)))
                     for f in os.listdir(session['audiobooks_dir'])
