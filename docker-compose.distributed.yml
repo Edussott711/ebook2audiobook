@@ -1,7 +1,16 @@
 version: '3.8'
 
+# Distributed Mode Docker Compose - No Shared Storage Required
+# Audio files are transferred directly via Redis using base64 encoding
+#
+# Usage:
+#   1. Start on coordinator machine: docker-compose -f docker-compose.distributed.yml up coordinator redis flower
+#   2. Start on worker machines: docker run --gpus all -e REDIS_URL=redis://<coordinator-ip>:6379/0 ebook2audiobook-worker
+#
+# For multi-machine setup, see deployment scripts in scripts/distributed/
+
 services:
-  # Redis - Message broker et result backend
+  # Redis - Message broker, result backend, and audio transfer medium
   redis:
     image: redis:7-alpine
     container_name: ebook2audio-redis
@@ -9,7 +18,7 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-} --maxmemory 2gb --maxmemory-policy allkeys-lru
     networks:
       - ebook2audio-net
     healthcheck:
@@ -19,26 +28,20 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Coordinator - Master node
+  # Coordinator - Master node (runs on one machine)
   coordinator:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: ebook2audio-coordinator
     environment:
-      - DISTRIBUTED_MODE=true
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - SHARED_STORAGE_TYPE=${SHARED_STORAGE_TYPE:-nfs}
-      - SHARED_STORAGE_PATH=/mnt/shared
       - NUM_WORKERS=${NUM_WORKERS:-2}
     ports:
       - "7860:7860"  # Gradio UI
     volumes:
       - ./input:/app/input
       - ./output:/app/output
-      - shared_audio:/mnt/shared
       - ./models:/app/models
     depends_on:
       redis:
@@ -48,25 +51,20 @@ services:
     command: >
       sh -c "echo 'Waiting for workers...' &&
              sleep 10 &&
-             python app.py --script_mode gradio"
+             python app.py --script_mode full_docker"
     restart: unless-stopped
 
-  # Worker - Processing nodes
+  # Worker - Processing nodes (run on machines with GPUs)
+  # NOTE: For multi-machine setup, use docker run instead (see deployment scripts)
   worker:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
     environment:
-      - DISTRIBUTED_MODE=true
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - SHARED_STORAGE_TYPE=${SHARED_STORAGE_TYPE:-nfs}
-      - SHARED_STORAGE_PATH=/mnt/shared
-      - CUDA_VISIBLE_DEVICES=${WORKER_GPU_ID:-}
+      - CUDA_VISIBLE_DEVICES=${WORKER_GPU_ID:-0}
       - WORKER_ID=${WORKER_ID:-worker}
     volumes:
-      - shared_audio:/mnt/shared
       - ./models:/app/models
     depends_on:
       redis:
@@ -74,22 +72,16 @@ services:
     networks:
       - ebook2audio-net
     deploy:
-      replicas: 2
+      replicas: ${NUM_WORKERS:-2}
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    command: >
-      celery -A lib.distributed.celery_app worker
-      --loglevel=info
-      --concurrency=1
-      --max-tasks-per-child=50
-      --hostname=worker_${WORKER_ID:-auto}@%h
     restart: unless-stopped
 
-  # Flower - Monitoring dashboard
+  # Flower - Monitoring dashboard (optional)
   flower:
     image: mher/flower:2.0
     container_name: ebook2audio-flower
@@ -114,10 +106,3 @@ networks:
 volumes:
   redis_data:
     driver: local
-  shared_audio:
-    driver: local
-    # Pour NFS, remplacer par:
-    # driver_opts:
-    #   type: nfs
-    #   o: addr=YOUR_NFS_SERVER,rw,nfsvers=4
-    #   device: ":/path/to/shared"

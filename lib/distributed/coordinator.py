@@ -32,9 +32,7 @@ class DistributedCoordinator:
         self,
         session_id: str,
         num_workers: int = 1,
-        redis_url: str = None,
-        storage_type: str = 'local',
-        storage_path: str = '/tmp/shared'
+        redis_url: str = None
     ):
         """
         Initialise le coordinator.
@@ -43,8 +41,6 @@ class DistributedCoordinator:
             session_id: ID unique de la session de conversion
             num_workers: Nombre de workers attendus
             redis_url: URL de connexion Redis
-            storage_type: Type de stockage ('nfs', 's3', 'local')
-            storage_path: Chemin du stockage partagé
         """
         self.session_id = session_id
         self.num_workers = num_workers
@@ -60,11 +56,10 @@ class DistributedCoordinator:
         self.checkpoint_manager = DistributedCheckpointManager(
             session_id, self.redis_client
         )
-        self.storage_handler = SharedStorageHandler(storage_type, storage_path)
 
         logger.info(
             f"Coordinator initialized for session {session_id} "
-            f"with {num_workers} workers"
+            f"with {num_workers} workers (no shared storage required)"
         )
 
     def distribute_chapters(
@@ -163,9 +158,29 @@ class DistributedCoordinator:
             failed = self._identify_failed_tasks(result)
             raise Exception(f"Failed chapters: {failed}") from e
 
-        # Trier par chapter_id
+        # Décoder les audios base64 et sauvegarder localement
+        import base64
+        import os
+
+        os.makedirs('/tmp/distributed_audio', exist_ok=True)
+
         for res in results:
-            completed_paths[res['chapter_id']] = res['audio_path']
+            chapter_id = res['chapter_id']
+
+            # Décoder audio base64
+            audio_bytes = base64.b64decode(res['audio_base64'])
+
+            # Sauvegarder localement
+            audio_path = f'/tmp/distributed_audio/{self.session_id}_chapter_{chapter_id}.mp3'
+            with open(audio_path, 'wb') as f:
+                f.write(audio_bytes)
+
+            completed_paths[chapter_id] = audio_path
+
+            logger.info(
+                f"Chapter {chapter_id} received ({res.get('audio_size_mb', 0):.2f} MB, "
+                f"{res.get('duration', 0):.1f}s)"
+            )
 
         sorted_paths = [
             completed_paths[i] for i in sorted(completed_paths.keys())
@@ -183,7 +198,7 @@ class DistributedCoordinator:
         Combine les chapitres audio en un fichier final.
 
         Args:
-            audio_paths: Chemins des audios de chapitres (ordonnés)
+            audio_paths: Chemins des audios de chapitres (ordonnés, déjà en local)
             output_path: Chemin du fichier de sortie
 
         Returns:
@@ -191,20 +206,12 @@ class DistributedCoordinator:
         """
         logger.info(f"Combining {len(audio_paths)} audio files...")
 
-        # 1. Télécharger depuis stockage partagé
-        local_paths = []
-        for i, shared_path in enumerate(audio_paths):
-            local_path = f'/tmp/{self.session_id}_chapter_{i}.mp3'
-            self.storage_handler.download_audio(shared_path, local_path)
-            local_paths.append(local_path)
-
-        # 2. Utiliser la fonction existante combine_audio_files
         import subprocess
 
         # Créer fichier liste pour FFmpeg
         list_file = f'/tmp/{self.session_id}_chapters.txt'
         with open(list_file, 'w') as f:
-            for path in local_paths:
+            for path in audio_paths:
                 f.write(f"file '{path}'\n")
 
         # FFmpeg concat
@@ -220,7 +227,7 @@ class DistributedCoordinator:
 
         # Cleanup
         os.remove(list_file)
-        for path in local_paths:
+        for path in audio_paths:
             try:
                 os.remove(path)
             except Exception:

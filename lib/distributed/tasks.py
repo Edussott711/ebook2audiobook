@@ -88,23 +88,21 @@ def process_chapter(
         combined_path = f'/tmp/{session_id}_chapter_{chapter_id}.mp3'
         _combine_chapter_sentences(sentence_audio_files, combined_path)
 
-        # 4. Uploader vers stockage partagé
-        storage_handler = SharedStorageHandler(
-            storage_type=os.getenv('SHARED_STORAGE_TYPE', 'local'),
-            storage_path=os.getenv('SHARED_STORAGE_PATH', '/tmp/shared')
-        )
-        shared_path = storage_handler.upload_audio(
-            combined_path,
-            session_id,
-            f'chapter_{chapter_id}'
-        )
+        # 4. Calculer durée
+        duration = _get_audio_duration(combined_path)
 
-        # 5. Mettre à jour checkpoint
+        # 5. Encoder l'audio en base64 pour transfert via Redis
+        import base64
+        with open(combined_path, 'rb') as f:
+            audio_bytes = f.read()
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        audio_size_mb = len(audio_bytes) / (1024 * 1024)
+
+        logger.info(f"Chapter {chapter_id} audio size: {audio_size_mb:.2f} MB")
+
+        # 6. Mettre à jour checkpoint
         checkpoint_manager = DistributedCheckpointManager(session_id)
         checkpoint_manager.mark_chapter_complete(chapter_id)
-
-        # 6. Calculer durée
-        duration = _get_audio_duration(combined_path)
 
         # 7. Cleanup fichiers temporaires
         _cleanup_temp_files(sentence_audio_files + [combined_path])
@@ -117,7 +115,8 @@ def process_chapter(
 
         return {
             'chapter_id': chapter_id,
-            'audio_path': shared_path,
+            'audio_base64': audio_base64,
+            'audio_size_mb': audio_size_mb,
             'duration': duration,
             'num_sentences': len(sentences),
             'processing_time': elapsed

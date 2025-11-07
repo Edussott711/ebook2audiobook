@@ -5,12 +5,35 @@
 Le mode distribué permet de **paralléliser la conversion TTS** en utilisant plusieurs machines équipées de GPU, réduisant significativement le temps de traitement.
 
 **Architecture** : Celery + Redis
+**Stockage partagé** : ❌ **Pas nécessaire !** Audio transféré via Redis (base64)
 
 ---
 
 ## 🚀 Quick Start (3 minutes)
 
-### 1. Démarrer le cluster
+### Option 1: Script interactif (Recommandé)
+
+```bash
+# Setup automatique
+./scripts/distributed/setup-cluster.sh
+
+# Suivre les instructions pour configurer coordinator ou worker
+```
+
+### Option 2: Multi-machines avec Docker
+
+```bash
+# Machine 1 (Coordinator)
+./scripts/distributed/start-coordinator.sh
+
+# Machine 2+ (Workers - sur chaque machine avec GPU)
+COORDINATOR_IP=192.168.1.10 ./scripts/distributed/start-worker.sh
+
+# Accéder à l'interface web
+open http://192.168.1.10:7860
+```
+
+### Option 3: Machine locale avec plusieurs GPUs
 
 ```bash
 # 1. Démarrer Redis
@@ -18,37 +41,18 @@ docker run -d -p 6379:6379 --name ebook2audio-redis redis:7-alpine
 
 # 2. Démarrer les workers (1 par GPU)
 # Terminal 1 - Worker 1
-export WORKER_ID=worker_1
-export CUDA_VISIBLE_DEVICES=0
-python app.py --worker-mode
+WORKER_ID=worker_1 CUDA_VISIBLE_DEVICES=0 python app.py --worker_mode
 
 # Terminal 2 - Worker 2
-export WORKER_ID=worker_2
-export CUDA_VISIBLE_DEVICES=1
-python app.py --worker-mode
+WORKER_ID=worker_2 CUDA_VISIBLE_DEVICES=1 python app.py --worker_mode
 
 # 3. Lancer la conversion (coordinator)
 python app.py --headless \
   --distributed \
-  --num-workers 2 \
+  --num_workers 2 \
   --ebook input/book.epub \
-  --language en \
+  --language eng \
   --voice jenny
-```
-
-### 2. Avec Docker Compose (Recommandé)
-
-```bash
-# Démarrer tout le cluster
-./scripts/start-distributed.sh
-
-# Ou manuellement
-docker-compose -f docker-compose.distributed.yml up -d --scale worker=3
-
-# Lancer conversion
-docker exec ebook2audio-coordinator python app.py \
-  --headless --distributed --num-workers 3 \
-  --ebook /app/input/book.epub
 ```
 
 ---
@@ -72,32 +76,36 @@ docker exec ebook2audio-coordinator python app.py \
 
 ```
 ┌──────────────┐
-│ COORDINATOR  │  Distribue les chapitres
-│  (Master)    │  via Celery tasks
-└──────┬───────┘
-       │
+│ COORDINATOR  │  1. Distribue les chapitres
+│  (Master)    │     via Celery tasks
+└──────┬───────┘  2. Reçoit audio base64
+       │          3. Combine & sauvegarde
        ▼
-┌──────────────┐
-│    REDIS     │  Message Broker
-│  Queue + KV  │  + Result Backend
-└──────┬───────┘
+┌──────────────────────────────┐
+│         REDIS                │
+│  • Message Broker (Celery)   │
+│  • Result Backend            │
+│  • Audio Transfer (base64)   │  ← Pas de NFS/S3 !
+└──────┬───────────────────────┘
        │
    ┌───┴────┬────────┬────────┐
    ▼        ▼        ▼        ▼
 ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
 │Work1│  │Work2│  │Work3│  │WorkN│
-│GPU0 │  │GPU1 │  │GPU2 │  │GPUN │
+│GPU0 │  │GPU1 │  │GPU2 │  │GPUN │  ← Machines indépendantes
 └─────┘  └─────┘  └─────┘  └─────┘
+  TTS      TTS      TTS      TTS
    │        │        │        │
    └────────┴────────┴────────┘
-              │
-              ▼
-      ┌──────────────┐
-      │ Shared       │
-      │ Storage      │
-      │ (NFS/S3)     │
-      └──────────────┘
+       (Audio encodé base64
+        et retourné via Redis)
 ```
+
+**Avantages** :
+- ✅ Aucun stockage partagé nécessaire (NFS/S3/etc.)
+- ✅ Déploiement simplifié avec `docker run` sur chaque machine
+- ✅ Workers complètement indépendants
+- ✅ Audio transféré directement via Redis
 
 ---
 
@@ -106,35 +114,48 @@ docker exec ebook2audio-coordinator python app.py \
 ### Variables d'environnement
 
 ```bash
-# Redis
+# Redis (seule configuration nécessaire!)
 export REDIS_URL=redis://localhost:6379/0
-
-# Stockage partagé
-export SHARED_STORAGE_TYPE=nfs  # ou s3, local
-export SHARED_STORAGE_PATH=/mnt/shared
 
 # Worker
 export WORKER_ID=worker_1
 export CUDA_VISIBLE_DEVICES=0
 ```
 
-### Arguments CLI
+### Arguments CLI (Coordinator)
 
 ```bash
 python app.py --headless \
-  --distributed \                    # Active le mode distribué
-  --num-workers 4 \                  # Nombre de workers
-  --redis-url redis://redis:6379/0 \ # URL Redis
-  --storage-type nfs \               # Type de stockage
-  --storage-path /mnt/shared \       # Chemin stockage
+  --distributed \                     # Active le mode distribué
+  --num_workers 4 \                   # Nombre de workers
+  --redis_url redis://redis:6379/0 \  # URL Redis
   --ebook book.epub
+```
+
+### Arguments CLI (Worker)
+
+```bash
+python app.py --worker_mode  # Lance en mode worker
+# Utilise REDIS_URL, WORKER_ID et CUDA_VISIBLE_DEVICES des env vars
 ```
 
 ---
 
-## 🐳 Docker Compose
+## 🐳 Docker Déploiement
 
-### Configuration minimale
+### Option 1: Scripts automatiques (Recommandé)
+
+```bash
+# Sur la machine coordinator
+./scripts/distributed/start-coordinator.sh
+
+# Sur chaque machine worker
+COORDINATOR_IP=192.168.1.10 ./scripts/distributed/start-worker.sh
+```
+
+Voir [scripts/distributed/README.md](scripts/distributed/README.md) pour plus de détails.
+
+### Option 2: Docker Compose (machine locale uniquement)
 
 ```yaml
 # docker-compose.distributed.yml
@@ -145,33 +166,38 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    command: redis-server --maxmemory 2gb
 
   coordinator:
     build: .
     environment:
+      - REDIS_URL=redis://redis:6379/0
       - NUM_WORKERS=2
     volumes:
       - ./input:/app/input
       - ./output:/app/output
     depends_on:
       - redis
-    command: python app.py --headless --distributed ...
 
   worker:
-    build: .
+    build:
+      dockerfile: Dockerfile.worker
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - CUDA_VISIBLE_DEVICES=0
     deploy:
-      replicas: 2  # Nombre de workers
+      replicas: 2
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    depends_on:
-      - redis
-    command: python app.py --worker-mode
+```
+
+**Usage** :
+```bash
+docker-compose -f docker-compose.distributed.yml up -d
 ```
 
 ---
@@ -262,6 +288,9 @@ open http://localhost:5555
 
 ## ❓ FAQ
 
+**Q: Ai-je besoin d'un stockage partagé (NFS/S3) ?**
+R: ❌ **Non !** Les fichiers audio sont transférés directement via Redis (base64). Chaque machine est complètement indépendante.
+
 **Q: Combien de workers puis-je avoir ?**
 R: Autant que de GPUs. En pratique, 2-20 workers est optimal.
 
@@ -269,37 +298,56 @@ R: Autant que de GPUs. En pratique, 2-20 workers est optimal.
 R: Oui, mais les workers CPU seront beaucoup plus lents.
 
 **Q: Quelle consommation réseau ?**
-R: ~1-5MB par chapitre (transfert audio). Négligeable sur réseau local.
+R: ~1-10MB par chapitre (audio MP3 encodé base64 via Redis). Un livre de 50 chapitres = ~250MB transférés. Négligeable sur réseau local gigabit.
+
+**Q: Redis peut-il gérer de gros fichiers audio ?**
+R: Oui ! Redis 7 gère facilement des valeurs de 10-20MB. Configurez `maxmemory` selon vos besoins (voir docker-compose).
 
 **Q: Puis-je reprendre après interruption ?**
-R: Oui ! Le système de checkpoint distribué permet le resume.
+R: Oui ! Le système de checkpoint distribué (stocké dans Redis) permet le resume.
+
+**Q: Comment déployer sur plusieurs machines ?**
+R: Utilisez `./scripts/distributed/setup-cluster.sh` ou suivez [scripts/distributed/README.md](scripts/distributed/README.md).
 
 ---
 
 ## 🎉 Exemple complet
 
+### Scénario : 1 Coordinator + 3 Workers sur 4 machines
+
 ```bash
-# 1. Démarrer le cluster (3 workers)
-docker-compose -f docker-compose.distributed.yml up -d --scale worker=3
+# === MACHINE 1 (Coordinator - 192.168.1.10) ===
+./scripts/distributed/start-coordinator.sh
+# Coordinator démarré sur http://192.168.1.10:7860
+# Flower dashboard sur http://192.168.1.10:5555
 
-# 2. Vérifier les workers
-docker-compose -f docker-compose.distributed.yml ps
+# === MACHINE 2 (Worker 1 - GPU Tesla V100) ===
+COORDINATOR_IP=192.168.1.10 ./scripts/distributed/start-worker.sh
 
-# 3. Lancer conversion
+# === MACHINE 3 (Worker 2 - GPU RTX 3090) ===
+COORDINATOR_IP=192.168.1.10 ./scripts/distributed/start-worker.sh
+
+# === MACHINE 4 (Worker 3 - 2x RTX 4090) ===
+# Lancer 2 workers (1 par GPU)
+GPU_ID=0 WORKER_ID=worker_m4_gpu0 COORDINATOR_IP=192.168.1.10 ./scripts/distributed/start-worker.sh
+GPU_ID=1 WORKER_ID=worker_m4_gpu1 COORDINATOR_IP=192.168.1.10 ./scripts/distributed/start-worker.sh
+
+# === Retour sur COORDINATOR ===
+# Vérifier les workers dans Flower
+open http://192.168.1.10:5555
+# Vous devriez voir 4 workers actifs
+
+# Lancer conversion via interface web
+open http://192.168.1.10:7860
+# Ou en CLI :
 docker exec ebook2audio-coordinator python app.py \
   --headless \
   --distributed \
-  --num-workers 3 \
+  --num_workers 4 \
   --ebook /app/input/harry_potter.epub \
-  --language en \
-  --voice jenny
+  --language eng
 
-# 4. Suivre dans Flower
-open http://localhost:5555
-
-# 5. Résultat dans output/
-ls output/
-# harry_potter.mp3  (3x plus rapide qu'en séquentiel!)
+# Résultat : 4x plus rapide qu'en séquentiel! 🚀
 ```
 
 ---

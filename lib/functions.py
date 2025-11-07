@@ -2199,9 +2199,7 @@ def convert_ebook(args, ctx=None):
                                             coordinator = DistributedCoordinator(
                                                 session_id=id,
                                                 num_workers=args.get('num_workers', 1),
-                                                redis_url=args.get('redis_url'),
-                                                storage_type=args.get('storage_type', 'local'),
-                                                storage_path=args.get('storage_path', '/tmp/shared')
+                                                redis_url=args.get('redis_url')
                                             )
 
                                             # Prepare TTS config
