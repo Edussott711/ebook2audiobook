@@ -198,20 +198,24 @@ Refactoriser le fichier monolithique `lib/functions.py` (4162 lignes, 8 responsa
 
 **Status :** ✅ 100% | Tests : ❌ 0% | Docs : ✅ Complètes
 
-#### audio/exporter.py ⚠️
-- `combine_audio_chapters()` → **PLACEHOLDER** (référence lib.functions)
+#### audio/exporter.py ✅
+- `combine_audio_chapters()` → Export multi-format avec métadonnées FFmpeg et cover art
+- `get_audio_duration()` → ffprobe pour durée (fonction interne)
+- `generate_ffmpeg_metadata()` → Métadonnées FFMETADATA1 (fonction interne)
+- `export_audio()` → Export FFmpeg + cover art Mutagen (fonction interne)
 
-**Status :** ⚠️ Placeholder | Tests : ❌ 0% | Docs : ✅ Complètes
+**Status :** ✅ 100% | Tests : ❌ 0% | Docs : ✅ Complètes
 
-#### audio/metadata_generator.py ❌
-- Génération métadonnées FFmpeg → **NON CRÉÉ**
+#### audio/metadata_generator.py ✅
+- **INTÉGRÉ dans exporter.py** - generate_ffmpeg_metadata() implémenté comme fonction interne
 
-**Status :** ❌ 0% | Tests : ❌ 0% | Docs : ❌ 0%
+**Status :** ✅ Intégré | Tests : ❌ 0% | Docs : ✅ Complètes
 
-#### audio/ffmpeg_wrapper.py ❌
-- Abstraction FFmpeg/ffprobe → **NON CRÉÉ**
+#### audio/ffmpeg_wrapper.py ⚠️
+- **PARTIELLEMENT INTÉGRÉ** - get_audio_duration() et export_audio() dans exporter.py
+- Wrapper complet optionnel pour Phase 3
 
-**Status :** ❌ 0% | Tests : ❌ 0% | Docs : ❌ 0%
+**Status :** ⚠️ Intégration partielle | Tests : ❌ 0% | Docs : ⚠️ Partiel
 
 ---
 
@@ -372,8 +376,8 @@ Refactoriser le fichier monolithique `lib/functions.py` (4162 lignes, 8 responsa
 
 ---
 
-#### 6. audio/exporter.py - combine_audio_chapters() ⚠️
-**Ligne dans functions.py :** 1601-~2000 (400+ lignes)
+#### 6. audio/exporter.py - combine_audio_chapters() ✅
+**Ligne dans functions.py :** 1601-1872 (271 lignes)
 
 **Complexité :** 🔴 TRÈS ÉLEVÉE
 
@@ -391,14 +395,24 @@ Refactoriser le fichier monolithique `lib/functions.py` (4162 lignes, 8 responsa
 - default_audio_proc_format
 - session (métadonnées, chapitres, cover)
 
-**Plan d'extraction :**
-1. Créer AudioExporter class
-2. Extraire métadonnées FFmpeg → metadata_generator.py
-3. Créer FFmpegWrapper → ffmpeg_wrapper.py
-4. Séparer logique par format
-5. Factory pattern pour formats
+**Extraction réalisée :**
+✅ Fonction complète extraite dans lib/audio/exporter.py (535 lignes avec docs)
+✅ 3 fonctions internes implémentées:
+  - get_audio_duration() - ffprobe JSON parsing
+  - generate_ffmpeg_metadata() - FFMETADATA1 avec chapitres
+  - export_audio() - FFmpeg multi-format + cover art
+✅ Support 9 formats audio (AAC, FLAC, MP3, M4B, M4A, MP4, MOV, OGG, WAV, WebM)
+✅ Métadonnées format-specific (Vorbis uppercase, MP4 standard, MP3 ID3)
+✅ Split automatique basé sur durée (output_split_hours)
+✅ Batch processing 1024 fichiers avec multiprocessing
+✅ Cover art avec mutagen (MP3, M4B, M4A, MP4)
+✅ Loudness normalization (-16 LUFS) + noise reduction (afftdn -70dB)
+✅ ISBN/ASIN identifiers pour MP3 et MP4
+✅ VTT subtitle file moving
+✅ Parsing dates ISO8601 avec fractions de secondes
+✅ Documentation complète avec exemples et formats détaillés
 
-**Status actuel :** ⚠️ PLACEHOLDER
+**Status actuel :** ✅ COMPLÉTÉ
 
 ---
 
