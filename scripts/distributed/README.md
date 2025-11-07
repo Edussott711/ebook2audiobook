@@ -2,6 +2,48 @@
 
 These scripts help you quickly deploy ebook2audiobook in distributed mode across multiple machines using Docker.
 
+## 🚀 Démarrage Ultra-Rapide
+
+### 🧪 Test Local (1 machine) - 5 minutes
+
+```bash
+# Démo automatique complète
+./scripts/distributed/demo-local.sh
+```
+
+Ce script va tout faire automatiquement :
+- Build les images
+- Démarrer Redis + Flower + 2 Workers
+- Lancer une conversion de test
+- Te montrer le résultat !
+
+### ✅ Vérifier ta Configuration
+
+```bash
+# Check si tout est prêt
+./scripts/distributed/test-setup.sh
+```
+
+Ce script vérifie :
+- Docker installé ?
+- GPU détecté ?
+- Images buildées ?
+- Redis actif ?
+- Workers connectés ?
+
+### 📖 Guide Complet Étape par Étape
+
+**Voir le guide complet** : [`../../GUIDE_DEMARRAGE_RAPIDE.md`](../../GUIDE_DEMARRAGE_RAPIDE.md)
+
+Le guide couvre :
+- Test en local (1 machine)
+- Déploiement multi-machines (production)
+- Commandes détaillées
+- Troubleshooting
+- Exemples concrets
+
+---
+
 ## Architecture Overview
 
 - **Coordinator**: Master machine that runs Redis, Flower dashboard, and coordinates the conversion
