@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 
 from .celery_app import celery_app
 from .checkpoint_manager import DistributedCheckpointManager
-from .storage import SharedStorageHandler
+# Note: SharedStorageHandler n'est plus utilisé (audio transféré via Redis)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,11 @@ def process_chapter(
         logger.info(f"Chapter {chapter_id} audio size: {audio_size_mb:.2f} MB")
 
         # 6. Mettre à jour checkpoint
-        checkpoint_manager = DistributedCheckpointManager(session_id)
+        # Réutiliser connexion Redis plutôt que créer une nouvelle
+        import redis
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        checkpoint_manager = DistributedCheckpointManager(session_id, redis_client=redis_client)
         checkpoint_manager.mark_chapter_complete(chapter_id)
 
         # 7. Cleanup fichiers temporaires
@@ -130,9 +134,13 @@ def process_chapter(
 
         # Marquer comme échec dans checkpoint
         try:
-            checkpoint_manager = DistributedCheckpointManager(session_id)
+            import redis
+            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+            redis_client = redis.from_url(redis_url, decode_responses=True)
+            checkpoint_manager = DistributedCheckpointManager(session_id, redis_client=redis_client)
             checkpoint_manager.mark_chapter_failed(chapter_id, str(exc))
-        except Exception:
+        except Exception as checkpoint_error:
+            logger.error(f"Failed to mark chapter {chapter_id} as failed: {checkpoint_error}")
             pass
 
         # Retry avec backoff exponentiel

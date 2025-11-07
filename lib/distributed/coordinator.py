@@ -11,7 +11,7 @@ from celery.result import GroupResult
 
 from .tasks import process_chapter
 from .checkpoint_manager import DistributedCheckpointManager
-from .storage import SharedStorageHandler
+# Note: SharedStorageHandler n'est plus utilisé (audio transféré via Redis)
 
 logger = logging.getLogger(__name__)
 
