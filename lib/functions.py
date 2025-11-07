@@ -38,6 +38,7 @@ from lib import *
 from lib.classes.voice_extractor import VoiceExtractor
 from lib.classes.tts_manager import TTSManager
 from lib.checkpoint_manager import CheckpointManager
+from lib.session_persistence import SessionPersistence
 #from lib.classes.redirect_console import RedirectConsole
 #from lib.classes.argos_translator import ArgosTranslator
 
@@ -166,7 +167,8 @@ class SessionContext:
                 "chapters": None,
                 "cover": None,
                 "duration": 0,
-                "playback_time": 0
+                "playback_time": 0,
+                "created_at": datetime.now().isoformat()
             }, manager=self.manager)
         return self.sessions[id]
 
@@ -2265,6 +2267,12 @@ def restore_session_from_data(data, session):
 
 def reset_ebook_session(id):
     session = context.get_session(id)
+    # FIX: Clear active_session when conversion completes
+    # This is called after successful conversion
+    from lib.session_persistence import SessionPersistence
+    sp = SessionPersistence()
+    sp.set_active_session(None)
+
     data = {
         "ebook": None,
         "chapters_dir": None,
@@ -2325,6 +2333,64 @@ def show_alert(state):
 def web_interface(args, ctx):
     global context, is_gui_process
     context = ctx
+
+    # Initialize session persistence
+    session_persistence = SessionPersistence()
+
+    # Session management helper functions
+    def load_session_choices():
+        """Load session list for dropdown choices."""
+        try:
+            sessions = session_persistence.list_sessions(include_completed=False)
+            choices = ['New Session']
+            for session in sessions:
+                display_name = session_persistence.get_session_display_name(session['id'])
+                choices.append(display_name)
+            return choices
+        except Exception as e:
+            print(f"Error loading session choices: {e}")
+            return ['New Session']
+
+    def get_session_id_from_display_name(display_name):
+        """Get session ID from display name."""
+        if display_name == 'New Session':
+            return None
+        try:
+            sessions = session_persistence.list_sessions(include_completed=False)
+            for session in sessions:
+                if session_persistence.get_session_display_name(session['id']) == display_name:
+                    return session['id']
+            return None
+        except Exception as e:
+            print(f"Error getting session ID: {e}")
+            return None
+
+    def save_session_to_disk(id):
+        """Save current session to disk."""
+        try:
+            session = context.get_session(id)
+            if session and session.get('id'):
+                # Add created_at timestamp if not present
+                if 'created_at' not in session:
+                    session['created_at'] = datetime.now().isoformat()
+
+                session_persistence.save_session(session['id'], dict(session))
+                return True
+        except Exception as e:
+            print(f"Error saving session to disk: {e}")
+        return False
+
+    def load_session_from_disk(session_id):
+        """Load session from disk."""
+        try:
+            if not session_id:
+                return None
+            session_data = session_persistence.load_session(session_id)
+            return session_data
+        except Exception as e:
+            print(f"Error loading session from disk: {e}")
+            return None
+
     script_mode = args['script_mode']
     is_gui_process = args['is_gui_process']
     is_gui_shared = args['share']
@@ -2549,6 +2615,17 @@ def web_interface(args, ctx):
         with gr.Tabs(elem_id='gr_tabs'):
             gr_tab_main = gr.TabItem('Main Parameters', elem_id='gr_tab_main', elem_classes='tab_item')
             with gr_tab_main:
+                # Session selector at the top
+                with gr.Group(elem_id='gr_group_session_selector'):
+                    gr_session_selector = gr.Dropdown(
+                        label='Active Session',
+                        elem_id='gr_session_selector',
+                        choices=['New Session'],
+                        value='New Session',
+                        type='value',
+                        interactive=True,
+                        info='Select an existing session to resume or start a new one'
+                    )
                 with gr.Row(elem_id='gr_row_tab_main'):
                     with gr.Column(elem_id='gr_col_1', scale=3):
                         with gr.Group(elem_id='gr1'):
@@ -2858,6 +2935,90 @@ def web_interface(args, ctx):
         def alert_exception(error):
             gr.Error(error)
             DependencyError(error)
+
+        def update_session_selector(id):
+            """Update session selector dropdown with current session."""
+            try:
+                if not id:
+                    return gr.update(choices=['New Session'], value='New Session')
+
+                choices = load_session_choices()
+                # Check if this session exists in saved sessions
+                if session_persistence.session_exists(id):
+                    display_name = session_persistence.get_session_display_name(id)
+                    # Only set value if it exists in choices
+                    if display_name in choices:
+                        return gr.update(choices=choices, value=display_name)
+
+                # Default to New Session if not found
+                return gr.update(choices=choices, value='New Session')
+            except Exception as e:
+                print(f"Error updating session selector: {e}")
+                return gr.update(choices=['New Session'], value='New Session')
+
+        def handle_session_selector_change(selected_session, current_id, req: gr.Request):
+            """Handle session selection from dropdown."""
+            try:
+                if selected_session == 'New Session':
+                    # Create a new session
+                    new_id = str(uuid.uuid4())
+                    session = context.get_session(new_id)
+                    # Add created_at timestamp
+                    session['created_at'] = datetime.now().isoformat()
+
+                    # FIX PROBLEM 6: Save new session to disk immediately
+                    save_session_to_disk(new_id)
+
+                    # Clear active session in persistence (new session not yet active)
+                    session_persistence.set_active_session(None)
+
+                    print(f"✓ Created and saved new session: {new_id[:8]}")
+                    # Return new session ID and refresh choices
+                    return new_id, gr.update(choices=load_session_choices(), value='New Session')
+                else:
+                    # Load existing session
+                    session_id = get_session_id_from_display_name(selected_session)
+                    if session_id:
+                        # Check if another session is active (block multiple active sessions)
+                        active_session_id = session_persistence.get_active_session()
+                        if active_session_id and active_session_id != session_id:
+                            # Check if active session is actually converting
+                            active_disk = load_session_from_disk(active_session_id)
+                            if active_disk and active_disk.get('status') == 'converting':
+                                gr.Warning(f"Another session is currently converting. Please wait for it to complete.")
+                                return current_id, gr.update(value=selected_session)
+                            else:
+                                # Active session not really converting, clear it
+                                session_persistence.set_active_session(None)
+
+                        # Load session from disk
+                        disk_session = load_session_from_disk(session_id)
+                        if disk_session:
+                            # Get or create session in memory
+                            session = context.get_session(session_id)
+                            # Restore all fields from disk
+                            for key, value in disk_session.items():
+                                if key not in ['tab_id', 'process_id', 'cancellation_requested']:
+                                    # Don't restore runtime-only fields
+                                    session[key] = value
+
+                            # FIX PROBLEM 5: Save session to disk after switching
+                            # This updates last_access and ensures sync
+                            save_session_to_disk(session_id)
+
+                            # Set as active session only if it's converting
+                            if session.get('status') == 'converting':
+                                session_persistence.set_active_session(session_id)
+
+                            print(f"✓ Switched to session: {session_id[:8]}")
+                            return session_id, gr.update(value=selected_session)
+
+                    gr.Warning("Failed to load selected session")
+                    return current_id, gr.update(value=selected_session)
+            except Exception as e:
+                print(f"Error in handle_session_selector_change: {e}")
+                gr.Warning(f"Error switching session: {e}")
+                return current_id, gr.update()
 
         def restore_interface(id, req: gr.Request):
             try:
@@ -3444,9 +3605,11 @@ def web_interface(args, ctx):
                     show_alert({"type": "warning", "msg": error})
                 elif args['num_beams'] < args['length_penalty']:
                     error = 'Error: num beams must be greater or equal than length penalty.'
-                    show_alert({"type": "warning", "msg": error})                   
+                    show_alert({"type": "warning", "msg": error})
                 else:
                     session['status'] = 'converting'
+                    # FIX: Mark this session as active when conversion starts
+                    session_persistence.set_active_session(session['id'])
                     session['progress'] = len(audiobook_options)
                     if isinstance(args['ebook_list'], list):
                         ebook_list = args['ebook_list'][:]
@@ -3469,10 +3632,12 @@ def web_interface(args, ctx):
                                     count_file = len(args['ebook_list'])
                                     if count_file > 0:
                                         msg = f"{len(args['ebook_list'])} remaining..."
-                                    else: 
+                                    else:
                                         msg = 'Conversion successful!'
                                     yield gr.update(value=msg)
                         session['status'] = 'ready'
+                        # FIX: Clear active_session after batch conversion completes
+                        session_persistence.set_active_session(None)
                     else:
                         print(f"Processing eBook file: {os.path.basename(args['ebook'])}")
                         progress_status, passed = convert_ebook(args)
@@ -3482,6 +3647,8 @@ def web_interface(args, ctx):
                             else:
                                 error = 'Conversion failed.'
                             session['status'] = 'ready'
+                            # FIX: Clear active_session after failed conversion
+                            session_persistence.set_active_session(None)
                         else:
                             show_alert({"type": "success", "msg": progress_status})
                             reset_ebook_session(args['session'])
@@ -3529,42 +3696,78 @@ def web_interface(args, ctx):
         def change_gr_read_data(data, state, req: gr.Request):
             try:
                 msg = 'Error while loading saved session. Please try to delete your cookies and refresh the page'
+
+                # FIX PROBLEM 1: Create new session and save immediately
                 if data is None or not isinstance(data, dict) or 'id' not in data:
-                    data = context.get_session(str(uuid.uuid4()))
+                    new_session = context.get_session(str(uuid.uuid4()))
+                    # Save new session to disk immediately
+                    save_session_to_disk(new_session['id'])
+                    print(f"✓ Created and saved new session: {new_session['id'][:8]}")
+                    data = new_session
 
                 # Check if this session existed before (to detect fresh server start after Docker restart)
-                session_existed = data['id'] in context.sessions
+                session_existed_in_memory = data['id'] in context.sessions
+
+                # Get or create session in memory
                 session = context.get_session(data['id'])
 
-                # Check if conversion was in progress before restoring
-                was_converting = data.get('status') == 'converting'
+                # FIX PROBLEM 11: Load from disk FIRST, before any other restoration
+                # This ensures disk data takes precedence over potentially stale localStorage data
+                disk_session = None
+                if data['id']:
+                    disk_session = load_session_from_disk(data['id'])
+                    if disk_session and not session_existed_in_memory:
+                        # Restore session from disk to memory (only if not in memory)
+                        for key, value in disk_session.items():
+                            if key not in ['tab_id', 'process_id', 'cancellation_requested']:
+                                # Don't restore runtime-only fields
+                                session[key] = value
+                        print(f"✓ Session {data['id'][:8]} restored from disk")
+
+                # FIX PROBLEM 7 & 10: Use disk status as source of truth, not localStorage
+                # This prevents false positives when localStorage is stale
+                was_converting = False
+                if disk_session:
+                    # Trust disk status over localStorage
+                    was_converting = disk_session.get('status') == 'converting'
+                else:
+                    # Fallback to localStorage only if no disk session
+                    was_converting = data.get('status') == 'converting'
 
                 # Detect if this is a reconnection from the same browser tab
                 same_tab_reconnecting = data.get('tab_id') == session.get('tab_id') and session.get('tab_id') is not None
 
+                # FIX PROBLEM 10: Better reconnection detection
+                # Check if this socket hash already exists for this session (true reconnect)
+                is_existing_socket = req.session_hash in session.keys() and req.session_hash in active_sessions
+
                 # Count active socket connections for this session
-                # Session stores socket hashes as keys, so we check how many are still in active_sessions
                 active_socket_count = sum(1 for hash_key in active_sessions if hash_key in session.keys())
                 has_no_active_sockets = active_socket_count == 0
 
-                if same_tab_reconnecting or len(active_sessions) == 0:
+                # Only restore from localStorage if it's a same-tab reconnect or no active sessions
+                if same_tab_reconnecting or len(active_sessions) == 0 or has_no_active_sockets:
                     restore_session_from_data(data, session)
-                    # Reset status to None in these cases to allow reconnection:
-                    # 1. Not converting, OR
-                    # 2. Fresh server start (session didn't exist before = Docker restarted), OR
-                    # 3. No active sockets (all clients disconnected)
-                    # Otherwise, keep status to preserve active conversion state
-                    if not was_converting or not session_existed or has_no_active_sockets:
-                        session['status'] = None
+
+                # FIX PROBLEM 3: Don't reset status if conversion is in progress
+                # CRITICAL: Never interrupt an active conversion
+                if was_converting and session.get('status') == 'converting':
+                    # Conversion is actively running, DO NOT reset status
+                    print(f"✓ Preserving active conversion for session {session['id'][:8]}")
+                elif not was_converting and has_no_active_sockets:
+                    # No conversion and no active connections = safe to reset
+                    session['status'] = None
 
                 # Block only if it's NOT a reconnection AND start_session fails
-                if not same_tab_reconnecting and not has_no_active_sockets and not ctx_tracker.start_session(session['id']):
-                    error = "Your session is already active.<br>If it's not the case please close your browser and relaunch it."
-                    return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
-                else:
-                    active_sessions.add(req.session_hash)
-                    session[req.session_hash] = req.session_hash
-                    session['cancellation_requested'] = False
+                if not same_tab_reconnecting and not is_existing_socket and not has_no_active_sockets:
+                    if not ctx_tracker.start_session(session['id']):
+                        error = "Your session is already active.<br>If it's not the case please close your browser and relaunch it."
+                        return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
+
+                # Register this socket connection
+                active_sessions.add(req.session_hash)
+                session[req.session_hash] = req.session_hash
+                session['cancellation_requested'] = False
                 if isinstance(session['ebook'], str):
                     if not os.path.exists(session['ebook']):
                         session['ebook'] = None
@@ -3638,6 +3841,10 @@ def web_interface(args, ctx):
                                 else:
                                     state['hash'] = new_hash
                                     session_dict = proxy2dict(session)
+
+                            # Save session to disk
+                            save_session_to_disk(id)
+
                             if session['status'] == 'converting':
                                 if session['progress'] != len(audiobook_options):
                                     session['progress'] = len(audiobook_options)
@@ -3646,7 +3853,7 @@ def web_interface(args, ctx):
                 return gr.update(), gr.update(), gr.update()
             except Exception as e:
                 error = f'save_session(): {e}!'
-                alert_exception(error)              
+                alert_exception(error)
                 return gr.update(), gr.update(value=e), gr.update()
         
         def clear_event(id):
@@ -3693,6 +3900,18 @@ def web_interface(args, ctx):
             inputs=[gr_device, gr_session],
             outputs=None
         )
+        # FIX PROBLEM 9: Session selector change handler
+        # Note: req: gr.Request is auto-injected by Gradio, don't include in inputs
+        gr_session_selector.change(
+            fn=handle_session_selector_change,
+            inputs=[gr_session_selector, gr_session],
+            outputs=[gr_session, gr_session_selector]
+        ).then(
+            fn=refresh_interface,
+            inputs=[gr_session],
+            outputs=None
+        )
+
         gr_language.change(
             fn=change_gr_language,
             inputs=[gr_language, gr_session],
@@ -3913,6 +4132,10 @@ def web_interface(args, ctx):
                 gr_xtts_top_k, gr_xtts_top_p, gr_xtts_speed, gr_xtts_enable_text_splitting, gr_bark_text_temp,
                 gr_bark_waveform_temp, gr_voice_list, gr_output_split, gr_output_split_hours, gr_timer
             ]
+        ).then(
+            fn=update_session_selector,
+            inputs=[gr_session],
+            outputs=[gr_session_selector]
         ).then(
             fn=lambda session: update_gr_glass_mask(attr='class="hide"') if session else gr.update(),
             inputs=[gr_session],

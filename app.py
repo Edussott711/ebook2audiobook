@@ -261,7 +261,20 @@ Tip: to add of silence (1.4 seconds) into your text just use "###" or "[pause]".
                 sys.exit(1)
 
         from lib.functions import SessionContext, convert_ebook_batch, convert_ebook, web_interface
+        from lib.session_persistence import SessionPersistence
+
         ctx = SessionContext()
+
+        # Initialize session persistence and cleanup old sessions on startup
+        session_persistence = SessionPersistence()
+        session_persistence.cleanup_old_sessions()
+
+        # FIX PROBLEM 4: Clear active_session on startup (after restart, no session is active in memory)
+        # This prevents blocking when active_session points to a session that doesn't exist in memory
+        session_persistence.set_active_session(None)
+
+        print("✓ Session persistence initialized and cleanup complete")
+
         # Conditions based on the --headless flag
         if args['headless']:
             args['is_gui_process'] = False
