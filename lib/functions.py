@@ -2791,8 +2791,17 @@ def web_interface(args, ctx):
                 gr_audiobook_download_btn = gr.DownloadButton(elem_id='gr_audiobook_download_btn', label='↧', elem_classes=['small-btn'], variant='secondary', interactive=True, visible=True, scale=0, min_width=60)
                 gr_audiobook_list = gr.Dropdown(elem_id='gr_audiobook_list', label='', choices=audiobook_options, type='value', interactive=True, visible=True, scale=2)
                 gr_audiobook_del_btn = gr.Button(elem_id='gr_audiobook_del_btn', value='🗑', elem_classes=['small-btn'], variant='secondary', interactive=True, visible=True, scale=0, min_width=60)
+
+        # Convert button and chapter migration checkbox
         gr_convert_btn = gr.Button(elem_id='gr_convert_btn', value='📚', elem_classes='icon-btn', variant='primary', interactive=False)
-        
+        gr_scan_chapters_checkbox = gr.Checkbox(
+            label='📂 I moved chapter files - Scan and update checkpoint before converting',
+            elem_id='gr_scan_chapters_checkbox',
+            value=False,
+            interactive=True,
+            info='Check this if you copied chapter files from another session. The system will detect them and resume from where they left off.'
+        )
+
         gr_modal = gr.HTML(visible=False)
         gr_glass_mask = gr.HTML(f'<div id="glass-mask">{glass_mask_msg}</div>')
         gr_confirm_field_hidden = gr.Textbox(elem_id='confirm_hidden', visible=False)
@@ -3566,9 +3575,9 @@ def web_interface(args, ctx):
             return
 
         def submit_convert_btn(
-                id, device, ebook_file, tts_engine, language, voice, custom_model, fine_tuned, output_format, temperature, 
+                id, device, ebook_file, tts_engine, language, voice, custom_model, fine_tuned, output_format, temperature,
                 length_penalty, num_beams, repetition_penalty, top_k, top_p, speed, enable_text_splitting, text_temp, waveform_temp,
-                output_split, output_split_hours
+                output_split, output_split_hours, scan_chapters
             ):
             try:
                 session = context.get_session(id)
@@ -3607,6 +3616,17 @@ def web_interface(args, ctx):
                     error = 'Error: num beams must be greater or equal than length penalty.'
                     show_alert({"type": "warning", "msg": error})
                 else:
+                    # NEW FEATURE: Scan and detect moved chapters if checkbox is checked
+                    if scan_chapters:
+                        print("🔍 Scanning for existing chapter files...")
+                        from lib.checkpoint_manager import CheckpointManager
+                        checkpoint_mgr = CheckpointManager(session)
+                        scan_success = checkpoint_mgr.update_checkpoint_from_scan()
+                        if scan_success:
+                            show_alert({"type": "success", "msg": "✅ Chapters scanned successfully! Will resume from last completed chapter."})
+                        else:
+                            show_alert({"type": "warning", "msg": "⚠️ Chapter scan completed but found no existing files."})
+
                     session['status'] = 'converting'
                     # FIX: Mark this session as active when conversion starts
                     session_persistence.set_active_session(session['id'])
@@ -4086,7 +4106,7 @@ def web_interface(args, ctx):
                 gr_session, gr_device, gr_ebook_file, gr_tts_engine_list, gr_language, gr_voice_list,
                 gr_custom_model_list, gr_fine_tuned_list, gr_output_format_list,
                 gr_xtts_temperature, gr_xtts_length_penalty, gr_xtts_num_beams, gr_xtts_repetition_penalty, gr_xtts_top_k, gr_xtts_top_p, gr_xtts_speed, gr_xtts_enable_text_splitting,
-                gr_bark_text_temp, gr_bark_waveform_temp, gr_output_split, gr_output_split_hours
+                gr_bark_text_temp, gr_bark_waveform_temp, gr_output_split, gr_output_split_hours, gr_scan_chapters_checkbox
             ],
             outputs=[gr_tab_progress]
         ).then(

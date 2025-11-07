@@ -6,24 +6,35 @@ FROM ${BASE} AS base
 ENV PATH="/root/.local/bin:$PATH"
 # Set non-interactive mode to prevent tzdata prompt
 ENV DEBIAN_FRONTEND=noninteractive
-# Install system packages
+
+# OPTIMIZATION 1: Install system packages (cacheable, rarely changes)
 RUN apt-get update && \
     apt-get install -y gcc g++ make wget git calibre ffmpeg libmecab-dev mecab mecab-ipadic-utf8 libsndfile1-dev libc-dev curl espeak-ng sox && \
     curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-# Install Rust compiler
+
+# OPTIMIZATION 2: Install Rust compiler (cacheable, rarely changes)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
-# Copy the application
+
+# OPTIMIZATION 3: Set workdir before copying files
 WORKDIR /app
-COPY . /app
-# Install UniDic (non-torch dependent)
+
+# OPTIMIZATION 4: Copy ONLY requirements.txt first (maximize cache hit)
+# This layer is only invalidated when requirements.txt changes
+COPY requirements.txt /app/
+
+# OPTIMIZATION 5: Install UniDic BEFORE copying code (rarely changes)
 RUN pip install --no-cache-dir unidic-lite unidic && \
     python3 -m unidic download && \
     mkdir -p /root/.local/share/unidic
 ENV UNIDIC_DIR=/root/.local/share/unidic
+
+# OPTIMIZATION 6: Copy the rest of the application LAST
+# Code changes frequently, so this should be as late as possible
+COPY . /app
 
 # Second stage for PyTorch installation + swappable base image if you want to use a pulled image
 FROM $BASE_IMAGE AS pytorch
@@ -32,8 +43,10 @@ ARG TORCH_VERSION=""
 # Add parameter to control whether to skip the XTTS test
 ARG SKIP_XTTS_TEST="false"
 
-# Increase pip timeout for large package downloads (e.g., PyTorch wheels)
-ENV PIP_DEFAULT_TIMEOUT=300
+# FIX: Increase pip timeout significantly for large packages like PyTorch (887.9 MB)
+# 900 seconds = 15 minutes should be enough even for slow connections
+ENV PIP_DEFAULT_TIMEOUT=900
+ENV PIP_TIMEOUT=900
 
 # Extract torch versions from requirements.txt or set to empty strings if not found
 RUN TORCH_VERSION_REQ=$(grep -E "^torch==" requirements.txt | cut -d'=' -f3 || echo "") && \
@@ -42,7 +55,35 @@ RUN TORCH_VERSION_REQ=$(grep -E "^torch==" requirements.txt | cut -d'=' -f3 || e
     echo "Found in requirements: torch==$TORCH_VERSION_REQ torchaudio==$TORCHAUDIO_VERSION_REQ torchvision==$TORCHVISION_VERSION_REQ"
 
 # Install PyTorch with CUDA support if specified
-RUN if [ ! -z "$TORCH_VERSION" ]; then \
+# FIX: Added retry logic with 3 attempts and exponential backoff for large PyTorch downloads
+# OPTIMIZATION: Use BuildKit cache mount to persist pip cache between builds
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ ! -z "$TORCH_VERSION" ]; then \
+        # Define retry function for pip install with timeout handling
+        retry_pip_install() { \
+            local max_attempts=3; \
+            local attempt=1; \
+            local timeout=900; \
+            local cmd="$@"; \
+            while [ $attempt -le $max_attempts ]; do \
+                echo "📥 Attempt $attempt/$max_attempts: $cmd"; \
+                if eval "$cmd --timeout $timeout"; then \
+                    echo "✅ Successfully installed on attempt $attempt"; \
+                    return 0; \
+                else \
+                    echo "❌ Attempt $attempt failed"; \
+                    if [ $attempt -lt $max_attempts ]; then \
+                        local wait_time=$((2 ** attempt)); \
+                        echo "⏳ Waiting ${wait_time}s before retry..."; \
+                        sleep $wait_time; \
+                    fi; \
+                    attempt=$((attempt + 1)); \
+                fi; \
+            done; \
+            echo "❌ All $max_attempts attempts failed"; \
+            return 1; \
+        }; \
+        \
         # Check if we need to use specific versions or get the latest
         if [ ! -z "$TORCH_VERSION_REQ" ] && [ ! -z "$TORCHVISION_VERSION_REQ" ] && [ ! -z "$TORCHAUDIO_VERSION_REQ" ]; then \
             echo "Using specific versions from requirements.txt" && \
@@ -61,12 +102,10 @@ RUN if [ ! -z "$TORCH_VERSION" ]; then \
             CUDA_VERSION=$(echo "$TORCH_VERSION" | sed 's/cuda//g') && \
             echo "Detected CUDA version: $CUDA_VERSION" && \
             echo "Attempting to install PyTorch nightly for CUDA $CUDA_VERSION..." && \
-            #if ! pip install --no-cache-dir --pre $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC --index-url https://download.pytorch.org/whl/nightly/cu${CUDA_VERSION}; then \
-            if ! pip install --no-cache-dir --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu${CUDA_VERSION}; then \
+            if ! retry_pip_install "pip install --no-cache-dir --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu${CUDA_VERSION}"; then \
                 echo "❌ Nightly build for CUDA $CUDA_VERSION not available or failed" && \
                 echo "🔄 Trying stable release for CUDA $CUDA_VERSION..." && \
-                #if pip install --no-cache-dir $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC --extra-index-url https://download.pytorch.org/whl/cu${CUDA_VERSION}; then \
-                if pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu${CUDA_VERSION}; then \
+                if retry_pip_install "pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu${CUDA_VERSION}"; then \
                     echo "✅ Successfully installed stable PyTorch for CUDA $CUDA_VERSION"; \
                 else \
                     echo "❌ Both nightly and stable builds failed for CUDA $CUDA_VERSION"; \
@@ -77,32 +116,54 @@ RUN if [ ! -z "$TORCH_VERSION" ]; then \
                 echo "✅ Successfully installed nightly PyTorch for CUDA $CUDA_VERSION"; \
             fi; \
         else \
-            # Handle non-CUDA cases (existing functionality)
+            # Handle non-CUDA cases (existing functionality) with retry
             case "$TORCH_VERSION" in \
                 "rocm") \
-                    # Using the correct syntax for ROCm PyTorch installation
-                    pip install --no-cache-dir $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC --extra-index-url https://download.pytorch.org/whl/rocm6.2 \
+                    retry_pip_install "pip install --no-cache-dir $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC --extra-index-url https://download.pytorch.org/whl/rocm6.2" \
                     ;; \
                 "xpu") \
-                    # Install PyTorch with Intel XPU support through IPEX
-                    pip install --no-cache-dir $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC && \
-                    pip install --no-cache-dir intel-extension-for-pytorch --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
+                    retry_pip_install "pip install --no-cache-dir $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC" && \
+                    retry_pip_install "pip install --no-cache-dir intel-extension-for-pytorch --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/" \
                     ;; \
                 "cpu") \
-                    pip install --no-cache-dir $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC --extra-index-url https://download.pytorch.org/whl/cpu \
+                    retry_pip_install "pip install --no-cache-dir $TORCH_SPEC $TORCHVISION_SPEC $TORCHAUDIO_SPEC --extra-index-url https://download.pytorch.org/whl/cpu" \
                     ;; \
                 *) \
-                    pip install --no-cache-dir $TORCH_VERSION \
+                    retry_pip_install "pip install --no-cache-dir $TORCH_VERSION" \
                     ;; \
             esac; \
         fi && \
         # Install remaining requirements, skipping torch packages that might be there
         grep -v -E "^torch==|^torchvision==|^torchaudio==|^torchvision$" requirements.txt > requirements_no_torch.txt && \
-        pip install --no-cache-dir --upgrade -r requirements_no_torch.txt && \
+        retry_pip_install "pip install --no-cache-dir --upgrade -r requirements_no_torch.txt" && \
         rm requirements_no_torch.txt; \
     else \
-        # Install all requirements as specified
-        pip install --no-cache-dir --upgrade -r requirements.txt; \
+        # Install all requirements as specified (also with retry for robustness)
+        # Define retry function here too since it's in else block
+        retry_pip_install() { \
+            local max_attempts=3; \
+            local attempt=1; \
+            local timeout=900; \
+            local cmd="$@"; \
+            while [ $attempt -le $max_attempts ]; do \
+                echo "📥 Attempt $attempt/$max_attempts: $cmd"; \
+                if eval "$cmd --timeout $timeout"; then \
+                    echo "✅ Successfully installed on attempt $attempt"; \
+                    return 0; \
+                else \
+                    echo "❌ Attempt $attempt failed"; \
+                    if [ $attempt -lt $max_attempts ]; then \
+                        local wait_time=$((2 ** attempt)); \
+                        echo "⏳ Waiting ${wait_time}s before retry..."; \
+                        sleep $wait_time; \
+                    fi; \
+                    attempt=$((attempt + 1)); \
+                fi; \
+            done; \
+            echo "❌ All $max_attempts attempts failed"; \
+            return 1; \
+        }; \
+        retry_pip_install "pip install --no-cache-dir --upgrade -r requirements.txt"; \
     fi
 
 # Do a test run to pre-download and bake base models into the image, but only if SKIP_XTTS_TEST is not true
