@@ -39,9 +39,18 @@ from lib.classes.voice_extractor import VoiceExtractor
 from lib.classes.tts_manager import TTSManager
 from lib.checkpoint_manager import CheckpointManager
 from lib.session_persistence import SessionPersistence
-# Import refactored SRP modules
+# Import refactored SRP modules - Audio processing
 from lib.audio.converter import convert_chapters2audio
+from lib.audio.combiner import combine_audio_sentences
 from lib.audio.exporter import combine_audio_chapters
+# Import refactored SRP modules - Text processing
+from lib.text.processor import filter_chapter
+from lib.text.sentence_splitter import get_sentences
+from lib.text.number_converter import roman2number, set_formatted_number
+from lib.text.date_converter import year2words, clock2words, get_date_entities
+from lib.text.math_converter import math2words
+# Import refactored SRP modules - Ebook processing
+from lib.ebook.extractor import get_chapters
 #from lib.classes.redirect_console import RedirectConsole
 #from lib.classes.argos_translator import ArgosTranslator
 
@@ -505,7 +514,11 @@ def get_cover(epubBook, session):
         DependencyError(e)
         return False
 
-def get_chapters(epubBook, session):
+def get_chapters_legacy(epubBook, session):
+    """
+    DEPRECATED: Legacy monolithic version kept for reference.
+    Use lib.ebook.extractor.get_chapters() instead (refactored SRP version).
+    """
     try:
         msg = r'''
 *******************************************************************************
@@ -569,7 +582,11 @@ YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
         DependencyError(error)
         return None, None
 
-def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_compat):
+def filter_chapter_legacy(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_compat):
+    """
+    DEPRECATED: Legacy monolithic version kept for reference.
+    Use lib.text.processor.filter_chapter() instead (refactored SRP version).
+    """
 
     def tuple_row(node, last_text_char=None):
         try:
@@ -807,7 +824,11 @@ def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_co
         DependencyError(error)
         return None
 
-def get_sentences(text, lang, tts_engine):
+def get_sentences_legacy(text, lang, tts_engine):
+    """
+    DEPRECATED: Legacy monolithic version kept for reference.
+    Use lib.text.sentence_splitter.get_sentences() instead (refactored SRP version).
+    """
 
     def split_inclusive(text, pattern):
         result = []
@@ -1061,7 +1082,8 @@ def get_sanitized(str, replacement="_"):
     sanitized = sanitized.strip("_")
     return sanitized
     
-def get_date_entities(text, stanza_nlp):
+def get_date_entities_legacy(text, stanza_nlp):
+    """DEPRECATED: Use lib.text.date_converter.get_date_entities() instead"""
     try:
         doc = stanza_nlp(text)
         date_spans = []
@@ -1083,8 +1105,9 @@ def get_num2words_compat(lang_iso1):
     except Exception as e:
         return False
 
-def set_formatted_number(text: str, lang, lang_iso1: str, is_num2words_compat: bool, max_single_value: int = 999_999_999_999_999_999):
-    # match up to 18 digits, optional “,…” groups (allowing spaces or NBSP after comma), optional decimal of up to 12 digits
+def set_formatted_number_legacy(text: str, lang, lang_iso1: str, is_num2words_compat: bool, max_single_value: int = 999_999_999_999_999_999):
+    """DEPRECATED: Use lib.text.number_converter.set_formatted_number() instead"""
+    # match up to 18 digits, optional ",…" groups (allowing spaces or NBSP after comma), optional decimal of up to 12 digits
     # handle optional range with dash/en dash/em dash between numbers, and allow trailing punctuation
     number_re = re.compile(
         r'(?<!\w)'
@@ -1144,7 +1167,8 @@ def set_formatted_number(text: str, lang, lang_iso1: str, is_num2words_compat: b
 
     return number_re.sub(clean_match, text)
 
-def year2words(year_str, lang, lang_iso1, is_num2words_compat):
+def year2words_legacy(year_str, lang, lang_iso1, is_num2words_compat):
+    """DEPRECATED: Use lib.text.date_converter.year2words() instead"""
     try:
         year = int(year_str)
         first_two = int(year_str[:2])
@@ -1166,7 +1190,8 @@ def year2words(year_str, lang, lang_iso1, is_num2words_compat):
         raise
         return False
 
-def clock2words(text, lang, lang_iso1, tts_engine, is_num2words_compat):
+def clock2words_legacy(text, lang, lang_iso1, tts_engine, is_num2words_compat):
+    """DEPRECATED: Use lib.text.date_converter.clock2words() instead"""
     time_rx = re.compile(r'(\d{1,2})[:.](\d{1,2})(?:[:.](\d{1,2}))?')
     lang_lc = (lang or "").lower()
     lc = language_clock.get(lang_lc) if 'language_clock' in globals() else None
@@ -1235,7 +1260,8 @@ def clock2words(text, lang, lang_iso1, tts_engine, is_num2words_compat):
 
     return time_rx.sub(repl_num, text)
 
-def math2words(text, lang, lang_iso1, tts_engine, is_num2words_compat):
+def math2words_legacy(text, lang, lang_iso1, tts_engine, is_num2words_compat):
+    """DEPRECATED: Use lib.text.math_converter.math2words() instead"""
 
     def repl_ambiguous(match):
         # handles "num SYMBOL num" and "SYMBOL num"
@@ -1283,7 +1309,8 @@ def math2words(text, lang, lang_iso1, tts_engine, is_num2words_compat):
     text = set_formatted_number(text, lang, lang_iso1, is_num2words_compat)
     return text
 
-def roman2number(text):
+def roman2number_legacy(text):
+    """DEPRECATED: Use lib.text.number_converter.roman2number() instead"""
 
     def is_valid_roman(s):
         return bool(valid_roman.fullmatch(s))
@@ -1589,7 +1616,11 @@ def assemble_chunks(txt_file, out_file):
         print(error)
         return False
 
-def combine_audio_sentences(chapter_audio_file, start, end, session):
+def combine_audio_sentences_legacy(chapter_audio_file, start, end, session):
+    """
+    DEPRECATED: Legacy monolithic version kept for reference.
+    Use lib.audio.combiner.combine_audio_sentences() instead (refactored SRP version).
+    """
     try:
         chapter_audio_file = os.path.join(session['chapters_dir'], chapter_audio_file)
         chapters_dir_sentences = session['chapters_dir_sentences']
