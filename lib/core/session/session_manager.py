@@ -7,12 +7,15 @@ from typing import Dict, Any, Optional
 from multiprocessing import Manager
 from .session_utils import recursive_proxy
 from lib.conf import (
-    NATIVE, default_device, default_language_code,
-    default_tts_engine, default_fine_tuned,
+    NATIVE, default_device,
     default_output_format, default_output_split,
     default_output_split_hours
 )
-from lib.models import TTS_ENGINES, default_engine_settings
+from lib.lang import default_language_code
+from lib.models import (
+    TTS_ENGINES, default_engine_settings,
+    default_tts_engine, default_fine_tuned
+)
 
 
 class SessionContext:

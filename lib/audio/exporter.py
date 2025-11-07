@@ -20,7 +20,8 @@ from pydub import AudioSegment
 
 from lib.core.session import context
 from lib.core.exceptions import DependencyError
-from lib.conf import default_audio_proc_format, TTS_SML
+from lib.conf import default_audio_proc_format
+from lib.models import TTS_SML
 from lib.system.utils import get_sanitized
 from lib.audio.combiner import assemble_chunks
 

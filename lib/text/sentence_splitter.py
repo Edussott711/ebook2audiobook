@@ -9,7 +9,7 @@ with specialized tokenizers and buffer management.
 import regex as re
 
 from lib.core.exceptions import DependencyError
-from lib.conf import TTS_SML
+from lib.models import TTS_SML
 from lib.lang import (
     language_mapping,
     punctuation_split_hard_set,

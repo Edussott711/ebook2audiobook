@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from num2words import num2words
 
 from lib.core.exceptions import DependencyError
-from lib.conf import TTS_SML
+from lib.models import TTS_SML
 from lib.lang import language_mapping, specialchars_remove
 from lib.text.date_converter import get_date_entities, year2words, clock2words
 from lib.text.math_converter import math2words
