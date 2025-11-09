@@ -2401,7 +2401,15 @@ def web_interface(args, ctx):
                 if 'created_at' not in session:
                     session['created_at'] = datetime.now().isoformat()
 
-                session_persistence.save_session(session['id'], dict(session))
+                # Convert session to dict and exclude non-serializable fields
+                session_dict = dict(session)
+                # CRITICAL: Remove runtime data that cannot be JSON serialized
+                # chapters and toc contain ebooklib Link objects (not JSON serializable)
+                # These are regenerated during conversion and don't need persistence
+                for key in ['chapters', 'toc']:
+                    session_dict.pop(key, None)
+
+                session_persistence.save_session(session['id'], session_dict)
                 return True
         except Exception as e:
             print(f"Error saving session to disk: {e}")
@@ -3032,11 +3040,22 @@ def web_interface(args, ctx):
                         if disk_session:
                             # Get or create session in memory
                             session = context.get_session(session_id)
+
+                            # Check if conversion is actively running
+                            is_converting = disk_session.get('status') == 'converting'
+
                             # Restore all fields from disk
                             for key, value in disk_session.items():
-                                if key not in ['tab_id', 'process_id', 'cancellation_requested']:
-                                    # Don't restore runtime-only fields
-                                    session[key] = value
+                                # Never restore these runtime fields
+                                if key in ['tab_id', 'process_id', 'cancellation_requested']:
+                                    continue
+                                # CRITICAL: Don't overwrite runtime conversion data during active conversion
+                                # chapters, toc contain complex objects not saved to disk (not JSON serializable)
+                                if is_converting and key in ['chapters', 'toc', 'converted_chapters']:
+                                    print(f"⚠️ Skipping restore of '{key}' - conversion in progress")
+                                    continue
+                                # Restore other fields normally
+                                session[key] = value
 
                             # FIX PROBLEM 5: Save session to disk after switching
                             # This updates last_access and ensures sync
@@ -3769,11 +3788,21 @@ def web_interface(args, ctx):
                 if data['id']:
                     disk_session = load_session_from_disk(data['id'])
                     if disk_session and not session_existed_in_memory:
+                        # Check if conversion is actively running
+                        is_converting = disk_session.get('status') == 'converting'
+
                         # Restore session from disk to memory (only if not in memory)
                         for key, value in disk_session.items():
-                            if key not in ['tab_id', 'process_id', 'cancellation_requested']:
-                                # Don't restore runtime-only fields
-                                session[key] = value
+                            # Never restore these runtime fields
+                            if key in ['tab_id', 'process_id', 'cancellation_requested']:
+                                continue
+                            # CRITICAL: Don't overwrite runtime conversion data during active conversion
+                            # chapters, toc contain complex objects not saved to disk (not JSON serializable)
+                            if is_converting and key in ['chapters', 'toc', 'converted_chapters']:
+                                print(f"⚠️ Skipping restore of '{key}' - conversion in progress")
+                                continue
+                            # Restore other fields normally
+                            session[key] = value
                         print(f"✓ Session {data['id'][:8]} restored from disk")
 
                 # FIX PROBLEM 7 & 10: Use disk status as source of truth, not localStorage
