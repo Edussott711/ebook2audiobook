@@ -2253,7 +2253,7 @@ def web_interface(args, ctx):
                         session = context_module.context.get_session(id)
                         if session:
                             if session['event'] == 'clear':
-                                session_dict = session
+                                session_dict = proxy2dict(session)  # Must convert proxy to dict for JSON serialization
                             else:
                                 previous_hash = state['hash']
                                 new_hash = hash_proxy_dict(MappingProxyType(session))
@@ -2269,8 +2269,8 @@ def web_interface(args, ctx):
                             if session['status'] == 'converting':
                                 if session['progress'] != len(audiobook_options):
                                     session['progress'] = len(audiobook_options)
-                                    return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), update_gr_audiobook_list(id)
-                            return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), gr.update()
+                                    return gr.update(value=session_dict), gr.update(value=state), update_gr_audiobook_list(id)
+                            return gr.update(value=session_dict), gr.update(value=state), gr.update()
                 return gr.update(), gr.update(), gr.update()
             except Exception as e:
                 error = f'save_session(): {e}!'
