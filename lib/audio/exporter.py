@@ -18,7 +18,7 @@ from multiprocessing import Pool, cpu_count
 
 from pydub import AudioSegment
 
-from lib.core.session import context
+from lib import context
 from lib.core.exceptions import DependencyError
 from lib.conf import default_audio_proc_format
 from lib.models import TTS_SML

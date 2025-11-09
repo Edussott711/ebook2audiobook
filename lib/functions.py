@@ -74,9 +74,8 @@ from lib.file import (
 #from lib.classes.redirect_console import RedirectConsole
 #from lib.classes.argos_translator import ArgosTranslator
 
-context = None
-is_gui_process = False
-active_sessions = set()
+# Import global context variables (defined in lib.context to avoid circular imports)
+import lib.context
 
 #import logging
 #logging.basicConfig(
@@ -369,7 +368,6 @@ def convert_ebook_batch(args, ctx=None):
 
 def convert_ebook(args, ctx=None):
     try:
-        global is_gui_process, context        
         error = None
         id = None
         info_session = None
@@ -392,7 +390,7 @@ def convert_ebook(args, ctx=None):
                     lang_array = languages.get(part3=args['language'])
                     if lang_array:
                         args['language'] = lang_array.part3
-                        args['language_iso1'] = lang_array.part1 
+                        args['language_iso1'] = lang_array.part1
                 else:
                     args['language_iso1'] = None
             except Exception as e:
@@ -404,12 +402,12 @@ def convert_ebook(args, ctx=None):
                 return error, false
 
             if ctx is not None:
-                context = ctx
+                lib.context.context = ctx
 
-            is_gui_process = args['is_gui_process']
+            lib.context.is_gui_process = args['is_gui_process']
             id = args['session'] if args['session'] is not None else str(uuid.uuid4())
 
-            session = context.get_session(id)
+            session = lib.context.context.get_session(id)
             session['script_mode'] = args['script_mode'] if args['script_mode'] is not None else NATIVE   
             session['ebook'] = args['ebook']
             session['ebook_list'] = args['ebook_list']
@@ -721,8 +719,7 @@ def show_alert(state):
                 gr.Success(state['msg'])
 
 def web_interface(args, ctx):
-    global context, is_gui_process
-    context = ctx
+    lib.context.context = ctx
 
     # Initialize session persistence
     session_persistence = SessionPersistence()
