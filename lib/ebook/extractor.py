@@ -15,7 +15,7 @@ from lib.core.exceptions import DependencyError
 from lib.ebook.metadata import get_ebook_title, get_all_spine_documents
 from lib.text.processor import filter_chapter
 from lib.text.utils import get_num2words_compat
-from lib.conf import year_to_decades_languages
+from lib.lang import year_to_decades_languages
 
 
 def get_cover(epub_book: epub.EpubBook, session: Dict[str, Any]) -> str | bool:
