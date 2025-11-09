@@ -396,13 +396,19 @@ def convert_ebook(args, ctx=None):
             id = args['session'] if args['session'] is not None else str(uuid.uuid4())
 
             session = context_module.context.get_session(id)
-            session['script_mode'] = args['script_mode'] if args['script_mode'] is not None else NATIVE   
+            session['script_mode'] = args['script_mode'] if args['script_mode'] is not None else NATIVE
             session['ebook'] = args['ebook']
             session['ebook_list'] = args['ebook_list']
             session['device'] = args['device']
             session['language'] = args['language']
             session['language_iso1'] = args['language_iso1']
             session['tts_engine'] = args['tts_engine'] if args['tts_engine'] is not None else get_compatible_tts_engines(args['language'])[0]
+
+            # Initialize custom_model_dir BEFORE using it
+            if not context_module.is_gui_process:
+                session['custom_model_dir'] = os.path.join(models_dir, '__sessions',f"model-{session['id']}")
+                session['voice_dir'] = os.path.join(voices_dir, '__sessions', f"voice-{session['id']}", session['language'])
+
             session['custom_model'] = args['custom_model'] if not context_module.is_gui_process or args['custom_model'] is None else os.path.join(session['custom_model_dir'], args['custom_model'])
             session['fine_tuned'] = args['fine_tuned']
             session['voice'] = args['voice']
@@ -424,11 +430,10 @@ def convert_ebook(args, ctx=None):
             info_session = f"\n*********** Session: {id} **************\nStore it in case of interruption, crash, reuse of custom model or custom voice,\nyou can resume the conversion with --session {id}\n\n💾 Checkpoint System Active:\n  - Progress is automatically saved at key stages\n  - If interrupted, simply restart with the same session ID to resume\n  - Use --force_restart to ignore checkpoints and start fresh"
 
             if not context_module.is_gui_process:
-                session['voice_dir'] = os.path.join(voices_dir, '__sessions', f"voice-{session['id']}", session['language'])
+                # voice_dir and custom_model_dir already initialized above
                 os.makedirs(session['voice_dir'], exist_ok=True)
                 # As now uploaded voice files are in their respective language folder so check if no wav and bark folder are on the voice_dir root from previous versions
                 [shutil.move(src, os.path.join(session['voice_dir'], os.path.basename(src))) for src in glob(os.path.join(os.path.dirname(session['voice_dir']), '*.wav')) + ([os.path.join(os.path.dirname(session['voice_dir']), 'bark')] if os.path.isdir(os.path.join(os.path.dirname(session['voice_dir']), 'bark')) and not os.path.exists(os.path.join(session['voice_dir'], 'bark')) else [])]
-                session['custom_model_dir'] = os.path.join(models_dir, '__sessions',f"model-{session['id']}")
                 if session['custom_model'] is not None:
                     if not os.path.exists(session['custom_model_dir']):
                         os.makedirs(session['custom_model_dir'], exist_ok=True)
