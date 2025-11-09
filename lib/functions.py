@@ -722,6 +722,7 @@ def show_alert(state):
 
 def web_interface(args, ctx):
     context_module.context = ctx
+    context_module.is_gui_process = True  # Always True in web interface
 
     # Initialize session persistence
     session_persistence = SessionPersistence()
@@ -1331,8 +1332,10 @@ def web_interface(args, ctx):
             """
 
         def alert_exception(error):
-            gr.Error(error)
-            DependencyError(error)
+            """Display error in Gradio UI without crashing the server."""
+            print(f"ERROR: {error}")  # Log to console
+            gr.Error(error)  # Show in UI
+            # Note: Do NOT use DependencyError here as it calls sys.exit() which crashes Gradio
 
         def update_session_selector(id):
             """Update session selector dropdown with current session."""
@@ -1802,20 +1805,28 @@ def web_interface(args, ctx):
                 nonlocal custom_model_options
                 session = context_module.context.get_session(id)
                 custom_model_tts_dir = check_custom_model_tts(session['custom_model_dir'], session['tts_engine'])
-                custom_model_options = [('None', None)] + [
-                    (
-                        str(dir),
-                        os.path.join(custom_model_tts_dir, dir)
-                    )
-                    for dir in os.listdir(custom_model_tts_dir)
-                    if os.path.isdir(os.path.join(custom_model_tts_dir, dir))
-                ]
+
+                # Handle case where custom_model_tts_dir is None
+                if custom_model_tts_dir is None:
+                    custom_model_options = [('None', None)]
+                else:
+                    custom_model_options = [('None', None)] + [
+                        (
+                            str(dir),
+                            os.path.join(custom_model_tts_dir, dir)
+                        )
+                        for dir in os.listdir(custom_model_tts_dir)
+                        if os.path.isdir(os.path.join(custom_model_tts_dir, dir))
+                    ]
+
                 session['custom_model'] = session['custom_model'] if session['custom_model'] in [option[1] for option in custom_model_options] else custom_model_options[0][1]
                 return gr.update(choices=custom_model_options, value=session['custom_model'])
             except Exception as e:
                 error = f'update_gr_custom_model_list(): {e}!'
-                alert_exception(error)
-                return gr.update()
+                print(error)  # Log the error
+                gr.Warning(error)  # Show warning to user
+                custom_model_options = [('None', None)]
+                return gr.update(choices=custom_model_options, value=None)
 
         def update_gr_fine_tuned_list(id):
             try:
