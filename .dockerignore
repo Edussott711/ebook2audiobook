@@ -94,3 +94,21 @@ build/
 htmlcov/
 coverage.xml
 *.cover
+
+# Development environment (for dev container)
+.devcontainer/
+docker-compose.dev.yml
+requirements-dev.txt
+.pre-commit-config.yaml
+.editorconfig
+Makefile
+DEVELOPMENT.md
+
+# MyPy cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Type checking
+.pyre/
+.pytype/

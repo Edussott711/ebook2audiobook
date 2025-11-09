@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        USERNAME: vscode
+        USER_UID: 1000
+        USER_GID: 1000
+    container_name: ebook2audiobook-dev
+    hostname: ebook2audiobook-dev
+
+    # Environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - TZ=UTC
+      - TERM=xterm-256color
+
+    # Volumes
+    volumes:
+      # Mount the entire project
+      - .:/workspace:cached
+
+      # Persistent volumes for caches and data
+      - dev-venv:/workspace/.venv
+      - dev-models:/workspace/models
+      - dev-pip-cache:/home/vscode/.cache/pip
+      - dev-pytest-cache:/workspace/.pytest_cache
+      - dev-mypy-cache:/workspace/.mypy_cache
+
+      # Git configuration (optional, for using host git config)
+      - ~/.gitconfig:/home/vscode/.gitconfig:ro
+
+    # Ports
+    ports:
+      - "7860:7860"  # Gradio web UI
+
+    # GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Shared memory size (important for PyTorch)
+    shm_size: 2gb
+
+    # Keep container running
+    command: sleep infinity
+
+    # Interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Working directory
+    working_dir: /workspace
+
+    # Restart policy
+    restart: unless-stopped
+
+    # User
+    user: vscode
+
+# Named volumes for persistence
+volumes:
+  dev-venv:
+    name: ebook2audiobook-dev-venv
+  dev-models:
+    name: ebook2audiobook-dev-models
+  dev-pip-cache:
+    name: ebook2audiobook-dev-pip-cache
+  dev-pytest-cache:
+    name: ebook2audiobook-dev-pytest-cache
+  dev-mypy-cache:
+    name: ebook2audiobook-dev-mypy-cache
+
+networks:
+  default:
+    name: ebook2audiobook-dev-network

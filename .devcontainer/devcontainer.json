@@ -1,0 +1,151 @@
+{
+  "name": "eBook2Audiobook Dev Environment",
+  "dockerComposeFile": ["../docker-compose.dev.yml"],
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+
+  // Features to install
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "installOhMyZsh": true,
+      "username": "vscode",
+      "uid": "1000",
+      "gid": "1000"
+    },
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "dockerDashComposeVersion": "v2"
+    },
+    "ghcr.io/devcontainers/features/nvidia-cuda:1": {
+      "installCudnn": true
+    }
+  },
+
+  // Configure tool-specific properties
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Python
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.black-formatter",
+        "ms-python.flake8",
+        "ms-python.mypy-type-checker",
+        "ms-python.pylint",
+
+        // Testing
+        "littlefoxteam.vscode-python-test-adapter",
+
+        // Docker
+        "ms-azuretools.vscode-docker",
+
+        // Git
+        "eamodio.gitlens",
+        "mhutchie.git-graph",
+
+        // General
+        "EditorConfig.EditorConfig",
+        "streetsidesoftware.code-spell-checker",
+        "aaron-bond.better-comments",
+        "oderwat.indent-rainbow",
+        "PKief.material-icon-theme",
+
+        // YAML
+        "redhat.vscode-yaml",
+
+        // Markdown
+        "yzhang.markdown-all-in-one",
+        "DavidAnson.vscode-markdownlint"
+      ],
+
+      "settings": {
+        // Python settings
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.linting.flake8Enabled": true,
+        "python.linting.mypyEnabled": true,
+        "python.formatting.provider": "black",
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.pytestArgs": [
+          "tests"
+        ],
+
+        // Editor settings
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": "explicit"
+        },
+        "editor.rulers": [88, 120],
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true,
+        "files.trimFinalNewlines": true,
+
+        // File associations
+        "files.associations": {
+          "*.yml": "yaml",
+          "*.yaml": "yaml"
+        },
+
+        // Terminal
+        "terminal.integrated.defaultProfile.linux": "zsh",
+
+        // Git
+        "git.autofetch": true,
+        "git.enableSmartCommit": true,
+
+        // Exclude patterns
+        "files.exclude": {
+          "**/__pycache__": true,
+          "**/*.pyc": true,
+          "**/.pytest_cache": true,
+          "**/.mypy_cache": true,
+          "**/tmp": true,
+          "**/models": true
+        }
+      }
+    }
+  },
+
+  // Use 'forwardPorts' to make a list of ports inside the container available locally
+  "forwardPorts": [7860],
+  "portsAttributes": {
+    "7860": {
+      "label": "Gradio Web UI",
+      "onAutoForward": "notify"
+    }
+  },
+
+  // Use 'postCreateCommand' to run commands after the container is created
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  // Comment out to connect as root instead
+  "remoteUser": "vscode",
+
+  // Set environment variables
+  "containerEnv": {
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "TZ": "UTC"
+  },
+
+  // Mount options
+  "mounts": [
+    "source=${localWorkspaceFolder}/audiobooks,target=/workspace/audiobooks,type=bind,consistency=cached",
+    "source=${localWorkspaceFolder}/ebooks,target=/workspace/ebooks,type=bind,consistency=cached",
+    "source=${localWorkspaceFolder}/models,target=/workspace/models,type=bind,consistency=cached",
+    "source=${localWorkspaceFolder}/voices,target=/workspace/voices,type=bind,consistency=cached",
+    "source=ebook2audiobook-venv,target=/workspace/.venv,type=volume"
+  ],
+
+  // Run arguments
+  "runArgs": [
+    "--gpus=all",
+    "--shm-size=2g"
+  ]
+}
