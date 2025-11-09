@@ -24,17 +24,27 @@ def proxy2dict(proxy_obj: Any) -> Any:
             return None  # Stop processing circular references
         visited.add(id(source))  # Mark as visited
 
-        if isinstance(source, dict):
+        # Check for dict-like objects (including DictProxy)
+        # Use duck typing: if it has 'items' method, treat it as a dict
+        if hasattr(source, 'items') and callable(getattr(source, 'items')):
             result = {}
             for key, value in source.items():
                 result[key] = recursive_copy(value, visited)
             return result
-        elif isinstance(source, list):
-            return [recursive_copy(item, visited) for item in source]
+        # Check for list-like objects (including ListProxy)
+        # Use duck typing: if it's not dict-like and is iterable (but not string)
+        elif hasattr(source, '__iter__') and not isinstance(source, (str, bytes)):
+            try:
+                return [recursive_copy(item, visited) for item in source]
+            except (TypeError, AttributeError):
+                # If iteration fails, fall through to other checks
+                pass
+
+        # Handle primitive types
+        if isinstance(source, (int, float, str, bool, type(None))):
+            return source
         elif isinstance(source, set):
             return list(source)
-        elif isinstance(source, (int, float, str, bool, type(None))):
-            return source
         else:
             # For unsupported types, return string representation
             return str(source)
