@@ -75,7 +75,9 @@ from lib.file import (
 #from lib.classes.argos_translator import ArgosTranslator
 
 # Import global context module (defined in lib.context to avoid circular imports)
-import lib.context as context_module
+# Use importlib to avoid conflict with 'context' variable exported from lib.__init__
+import importlib
+context_module = importlib.import_module('lib.context')
 
 #import logging
 #logging.basicConfig(
