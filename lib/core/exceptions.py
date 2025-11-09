@@ -41,9 +41,9 @@ class DependencyError(Exception):
         print(error_msg)
 
         # Exit the script if it's not a web process
-        # Note: is_gui_process should be injected or retrieved from context
-        from lib.functions import is_gui_process
-        if not is_gui_process:
+        import importlib
+        context_module = importlib.import_module('lib.context')
+        if not context_module.is_gui_process:
             sys.exit(1)
 
 

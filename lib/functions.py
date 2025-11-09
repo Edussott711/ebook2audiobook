@@ -85,22 +85,8 @@ context_module = importlib.import_module('lib.context')
 #    format="%(asctime)s [%(levelname)s] %(message)s"
 #)
 
-class DependencyError(Exception):
-    def __init__(self, message=None):
-        super().__init__(message)
-        print(message)
-        # Automatically handle the exception when it's raised
-        self.handle_exception()
-
-    def handle_exception(self):
-        # Print the full traceback of the exception
-        traceback.print_exc()      
-        # Print the exception message
-        error = f'Caught DependencyError: {self}'
-        print(error)    
-        # Exit the script if it's not a web process
-        if not context_module.is_gui_process:
-            sys.exit(1)
+# Import DependencyError from the core exceptions module
+from lib.core.exceptions import DependencyError
 
 class SessionTracker:
     def __init__(self):
