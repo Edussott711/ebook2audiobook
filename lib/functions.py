@@ -54,6 +54,19 @@ from lib.text.normalizer import normalize_text
 from lib.ebook.extractor import get_chapters
 # Import refactored SRP modules - System utilities
 from lib.system.utils import get_sanitized
+# Import refactored SRP modules - File management
+from lib.file import (
+    prepare_dirs,
+    delete_unused_tmp_dirs,
+    analyze_uploaded_file,
+    extract_custom_model,
+    calculate_hash,
+    compare_files_by_hash,
+    hash_proxy_dict,
+    compare_dict_keys,
+    proxy2dict,
+    compare_file_metadata
+)
 #from lib.classes.redirect_console import RedirectConsole
 #from lib.classes.argos_translator import ArgosTranslator
 
@@ -215,28 +228,6 @@ def recursive_proxy(data, manager=None):
         print(error)
         return
 
-def prepare_dirs(src, session):
-    try:
-        resume = False
-        os.makedirs(os.path.join(models_dir,'tts'), exist_ok=True)
-        os.makedirs(session['session_dir'], exist_ok=True)
-        os.makedirs(session['process_dir'], exist_ok=True)
-        os.makedirs(session['custom_model_dir'], exist_ok=True)
-        os.makedirs(session['voice_dir'], exist_ok=True)
-        os.makedirs(session['audiobooks_dir'], exist_ok=True)
-        session['ebook'] = os.path.join(session['process_dir'], os.path.basename(src))
-        if os.path.exists(session['ebook']):
-            if compare_files_by_hash(session['ebook'], src):
-                resume = True
-        if not resume:
-            shutil.rmtree(session['chapters_dir'], ignore_errors=True)
-        os.makedirs(session['chapters_dir'], exist_ok=True)
-        os.makedirs(session['chapters_dir_sentences'], exist_ok=True)
-        shutil.copy(src, session['ebook']) 
-        return True
-    except Exception as e:
-        DependencyError(e)
-        return False
 
 def check_programs(prog_name, command, options):
     try:
@@ -259,137 +250,12 @@ def check_programs(prog_name, command, options):
         DependencyError(e)
         return False, None
 
-def analyze_uploaded_file(zip_path, required_files):
-    try:
-        if not os.path.exists(zip_path):
-            error = f"The file does not exist: {os.path.basename(zip_path)}"
-            print(error)
-            return False
-        files_in_zip = {}
-        empty_files = set()
-        with zipfile.ZipFile(zip_path, 'r') as zf:
-            for file_info in zf.infolist():
-                file_name = file_info.filename
-                if file_info.is_dir():
-                    continue
-                base_name = os.path.basename(file_name)
-                files_in_zip[base_name.lower()] = file_info.file_size
-                if file_info.file_size == 0:
-                    empty_files.add(base_name.lower())
-        required_files = [file.lower() for file in required_files]
-        missing_files = [f for f in required_files if f not in files_in_zip]
-        required_empty_files = [f for f in required_files if f in empty_files]
-        if missing_files:
-            print(f"Missing required files: {missing_files}")
-        if required_empty_files:
-            print(f"Required files with 0 KB: {required_empty_files}")
-        return not missing_files and not required_empty_files
-    except zipfile.BadZipFile:
-        error = "The file is not a valid ZIP archive."
-        raise ValueError(error)
-    except Exception as e:
-        error = f"An error occurred: {e}"
-        raise RuntimeError(error)
 
-def extract_custom_model(file_src, session, required_files=None):
-    try:
-        model_path = None
-        if required_files is None:
-            required_files = models[session['tts_engine']][default_fine_tuned]['files']
-        model_name = re.sub('.zip', '', os.path.basename(file_src), flags=re.IGNORECASE)
-        model_name = get_sanitized(model_name)
-        with zipfile.ZipFile(file_src, 'r') as zip_ref:
-            files = zip_ref.namelist()
-            files_length = len(files)
-            tts_dir = session['tts_engine']
-            model_path = os.path.join(session['custom_model_dir'], tts_dir, model_name)
-            if os.path.exists(model_path):
-                print(f'{model_path} already exists, bypassing files extraction')
-                return model_path
-            os.makedirs(model_path, exist_ok=True)
-            required_files_lc = set(x.lower() for x in required_files)
-            with tqdm(total=files_length, unit='files') as t:
-                for f in files:
-                    base_f = os.path.basename(f).lower()
-                    if base_f in required_files_lc:
-                        out_path = os.path.join(model_path, base_f)
-                        with zip_ref.open(f) as src, open(out_path, 'wb') as dst:
-                            shutil.copyfileobj(src, dst)
-                    t.update(1)
-        if is_gui_process:
-            os.remove(file_src)
-        if model_path is not None:
-            msg = f'Extracted files to {model_path}'
-            print(msg)
-            return model_path
-        else:
-            error = f'An error occured when unzip {file_src}'
-            return None
-    except asyncio.exceptions.CancelledError as e:
-        DependencyError(e)
-        if is_gui_process:
-            os.remove(file_src)
-        return None       
-    except Exception as e:
-        DependencyError(e)
-        if is_gui_process:
-            os.remove(file_src)
-        return None
         
-def hash_proxy_dict(proxy_dict):
-    return hashlib.md5(str(proxy_dict).encode('utf-8')).hexdigest()
 
-def calculate_hash(filepath, hash_algorithm='sha256'):
-    hash_func = hashlib.new(hash_algorithm)
-    with open(filepath, 'rb') as f:
-        while chunk := f.read(8192):  # Read in chunks to handle large files
-            hash_func.update(chunk)
-    return hash_func.hexdigest()
 
-def compare_files_by_hash(file1, file2, hash_algorithm='sha256'):
-    return calculate_hash(file1, hash_algorithm) == calculate_hash(file2, hash_algorithm)
 
-def compare_dict_keys(d1, d2):
-    if not isinstance(d1, Mapping) or not isinstance(d2, Mapping):
-        return d1 == d2
-    d1_keys = set(d1.keys())
-    d2_keys = set(d2.keys())
-    missing_in_d2 = d1_keys - d2_keys
-    missing_in_d1 = d2_keys - d1_keys
-    if missing_in_d2 or missing_in_d1:
-        return {
-            "missing_in_d2": missing_in_d2,
-            "missing_in_d1": missing_in_d1,
-        }
-    for key in d1_keys.intersection(d2_keys):
-        nested_result = compare_keys(d1[key], d2[key])
-        if nested_result:
-            return {key: nested_result}
-    return None
 
-def proxy2dict(proxy_obj):
-    def recursive_copy(source, visited):
-        # Handle circular references by tracking visited objects
-        if id(source) in visited:
-            return None  # Stop processing circular references
-        visited.add(id(source))  # Mark as visited
-        if isinstance(source, dict):
-            result = {}
-            for key, value in source.items():
-                result[key] = recursive_copy(value, visited)
-            return result
-        elif isinstance(source, list):
-            return [recursive_copy(item, visited) for item in source]
-        elif isinstance(source, set):
-            return list(source)
-        elif isinstance(source, (int, float, str, bool, type(None))):
-            return source
-        elif isinstance(source, DictProxy):
-            # Explicitly handle DictProxy objects
-            return recursive_copy(dict(source), visited)  # Convert DictProxy to dict
-        else:
-            return str(source)  # Convert non-serializable types to strings
-    return recursive_copy(proxy_obj, set())
 
 def convert2epub(id):
     session = context.get_session(id)
@@ -612,44 +478,7 @@ def filter_sml(text):
 
 
 
-def delete_unused_tmp_dirs(web_dir, days, session):
-    dir_array = [
-        tmp_dir,
-        web_dir,
-        os.path.join(models_dir, '__sessions'),
-        os.path.join(voices_dir, '__sessions')
-    ]
-    current_user_dirs = {
-        f"proc-{session['id']}",
-        f"web-{session['id']}",
-        f"voice-{session['id']}",
-        f"model-{session['id']}"
-    }
-    current_time = time.time()
-    threshold_time = current_time - (days * 24 * 60 * 60)  # Convert days to seconds
-    for dir_path in dir_array:
-        if os.path.exists(dir_path) and os.path.isdir(dir_path):
-            for dir in os.listdir(dir_path):
-                if dir in current_user_dirs:        
-                    full_dir_path = os.path.join(dir_path, dir)
-                    if os.path.isdir(full_dir_path):
-                        try:
-                            dir_mtime = os.path.getmtime(full_dir_path)
-                            dir_ctime = os.path.getctime(full_dir_path)
-                            if dir_mtime < threshold_time and dir_ctime < threshold_time:
-                                shutil.rmtree(full_dir_path, ignore_errors=True)
-                                msg = f"Deleted expired session: {full_dir_path}"
-                                print(msg)
-                        except Exception as e:
-                            error = f"Error deleting {full_dir_path}: {e}"
-                            print(error)
 
-def compare_file_metadata(f1, f2):
-    if os.path.getsize(f1) != os.path.getsize(f2):
-        return False
-    if os.path.getmtime(f1) != os.path.getmtime(f2):
-        return False
-    return True
     
 def get_compatible_tts_engines(language):
     compatible_engines = [
