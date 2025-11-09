@@ -8,7 +8,7 @@ import regex as re
 from tqdm import tqdm
 import gradio as gr
 
-from lib.tts import TTSManager
+from lib.classes.tts_manager import TTSManager
 from lib.core.session import context
 from lib.core.exceptions import DependencyError
 from lib.conf import default_audio_proc_format
