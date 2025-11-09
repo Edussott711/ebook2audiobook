@@ -109,6 +109,7 @@ class SessionContext:
                 "status": None,
                 "event": None,
                 "progress": 0,
+                "progress_message": "",
                 "cancellation_requested": False,
                 "device": default_device,
                 "system": None,
@@ -1458,6 +1459,13 @@ def convert_chapters2audio(id):
             ]
             if resume_sentence not in missing_sentences:
                 missing_sentences.append(resume_sentence)
+
+        # Safety check: ensure chapters list exists and is not None
+        if session.get('chapters') is None:
+            error = 'No chapters found! session[\'chapters\'] is None'
+            print(error)
+            return False
+
         total_chapters = len(session['chapters'])
         if total_chapters == 0:
             error = 'No chapterrs found!'
@@ -1475,6 +1483,13 @@ def convert_chapters2audio(id):
         progress_bar = gr.Progress(track_tqdm=False)
         with tqdm(total=total_iterations, desc='0.00%', bar_format='{desc}: {n_fmt}/{total_fmt} ', unit='step', initial=0) as t:
             for x in range(0, total_chapters):
+                # Safety check: ensure chapters still exists during iteration
+                if session.get('chapters') is None:
+                    error = 'Conversion interrupted: chapters data was cleared'
+                    print(error)
+                    session['progress_message'] = error
+                    return False
+
                 chapter_num = x + 1
                 chapter_audio_file = f'chapter_{chapter_num}.{default_audio_proc_format}'
 
@@ -1497,9 +1512,13 @@ def convert_chapters2audio(id):
                 start = sentence_number
                 msg = f'Block {chapter_num} containing {sentences_count} sentences...'
                 print(msg)
+                # Update progress message in session for real-time tracking
+                progress_msg = f'Processing Block {chapter_num}/{total_chapters} ({sentences_count} sentences)'
+                session['progress_message'] = progress_msg
                 for i, sentence in enumerate(sentences):
                     if session['cancellation_requested']:
                         msg = 'Cancel requested'
+                        session['progress_message'] = 'Conversion cancelled by user'
                         print(msg)
                         return False
                     if sentence_number in missing_sentences or sentence_number > resume_sentence or (sentence_number == 0 and resume_sentence == 0):
@@ -1520,6 +1539,10 @@ def convert_chapters2audio(id):
                             t.set_description(f'{percentage:.2f}%')
                             msg = f" | {sentence}" if is_sentence else f" | {sentence}"
                             print(msg)
+                            # Update progress message with percentage for real-time tracking
+                            if sentence_number % 5 == 0 or sentence_number == total_sentences:  # Update every 5 sentences to avoid too many updates
+                                progress_msg = f'Block {chapter_num}/{total_chapters} - {percentage:.1f}% complete ({sentence_number}/{total_sentences} sentences)'
+                                session['progress_message'] = progress_msg
                         else:
                             return False
                     if sentence and sentence.strip() not in TTS_SML.values():
@@ -1528,6 +1551,9 @@ def convert_chapters2audio(id):
                 end = sentence_number - 1 if sentence_number > 1 else sentence_number
                 msg = f"End of Block {chapter_num}"
                 print(msg)
+                # Update progress message after completing block
+                progress_msg = f'Completed Block {chapter_num}/{total_chapters} - Combining audio...'
+                session['progress_message'] = progress_msg
                 if chapter_num in missing_chapters or sentence_number > resume_sentence:
                     if chapter_num <= resume_chapter:
                         msg = f'**Recovering missing file block {chapter_num}'
@@ -2194,6 +2220,7 @@ def convert_ebook(args, ctx=None):
                                     if convert_chapters2audio(id):
                                         checkpoint_mgr.save_checkpoint('audio_converted')
                                         msg = 'Conversion successful. Combining sentences and chapters...'
+                                        session['progress_message'] = msg
                                         show_alert({"type": "info", "msg": msg})
                                         exported_files = combine_audio_chapters(id)               
                                         if exported_files is not None:
@@ -2374,7 +2401,15 @@ def web_interface(args, ctx):
                 if 'created_at' not in session:
                     session['created_at'] = datetime.now().isoformat()
 
-                session_persistence.save_session(session['id'], dict(session))
+                # Convert session to dict and exclude non-serializable fields
+                session_dict = dict(session)
+                # CRITICAL: Remove runtime data that cannot be JSON serialized
+                # chapters and toc contain ebooklib Link objects (not JSON serializable)
+                # These are regenerated during conversion and don't need persistence
+                for key in ['chapters', 'toc']:
+                    session_dict.pop(key, None)
+
+                session_persistence.save_session(session['id'], session_dict)
                 return True
         except Exception as e:
             print(f"Error saving session to disk: {e}")
@@ -3003,13 +3038,31 @@ def web_interface(args, ctx):
                         # Load session from disk
                         disk_session = load_session_from_disk(session_id)
                         if disk_session:
+                            # Check if session already exists in memory with active conversion
+                            session_exists_in_memory = session_id in context.sessions
+
                             # Get or create session in memory
                             session = context.get_session(session_id)
+
+                            # Check if conversion is ACTIVELY running IN MEMORY (not just status on disk)
+                            # A session is truly active only if it exists in memory AND is converting AND has runtime data
+                            is_actively_converting = (session_exists_in_memory and
+                                                     session.get('status') == 'converting' and
+                                                     session.get('chapters') is not None)
+
                             # Restore all fields from disk
                             for key, value in disk_session.items():
-                                if key not in ['tab_id', 'process_id', 'cancellation_requested']:
-                                    # Don't restore runtime-only fields
-                                    session[key] = value
+                                # Never restore these runtime fields
+                                if key in ['tab_id', 'process_id', 'cancellation_requested']:
+                                    continue
+                                # CRITICAL: Don't overwrite runtime conversion data ONLY during ACTIVE conversion
+                                # chapters, toc contain complex objects not saved to disk (not JSON serializable)
+                                # Only protect if conversion is truly running in memory with live data
+                                if is_actively_converting and key in ['chapters', 'toc']:
+                                    print(f"⚠️ Skipping restore of '{key}' - active conversion in progress")
+                                    continue
+                                # Always restore other fields (including converted_chapters for crash recovery)
+                                session[key] = value
 
                             # FIX PROBLEM 5: Save session to disk after switching
                             # This updates last_access and ensures sync
@@ -3064,14 +3117,14 @@ def web_interface(args, ctx):
                     gr.update(value=session['language']), update_gr_tts_engine_list(id), update_gr_custom_model_list(id),
                     update_gr_fine_tuned_list(id), gr.update(value=session['output_format']), update_gr_audiobook_list(id), gr.update(value=load_vtt_data(session['audiobook'])),
                     gr.update(value=float(session['temperature'])), gr.update(value=float(session['length_penalty'])), gr.update(value=int(session['num_beams'])),
-                    gr.update(value=float(session['repetition_penalty'])), gr.update(value=int(session['top_k'])), gr.update(value=float(session['top_p'])), gr.update(value=float(session['speed'])), 
+                    gr.update(value=float(session['repetition_penalty'])), gr.update(value=int(session['top_k'])), gr.update(value=float(session['top_p'])), gr.update(value=float(session['speed'])),
                     gr.update(value=bool(session['enable_text_splitting'])), gr.update(value=float(session['text_temp'])), gr.update(value=float(session['waveform_temp'])), update_gr_voice_list(id),
-                    gr.update(value=session['output_split']), gr.update(value=session['output_split_hours']), gr.update(active=True)
+                    gr.update(value=session['output_split']), gr.update(value=session['output_split_hours']), gr.update(active=True), gr.update(value=session.get('progress_message', ''))
                 )
             except Exception as e:
                 error = f'restore_interface(): {e}'
                 alert_exception(error)
-                outputs = tuple([gr.update() for _ in range(24)])
+                outputs = tuple([gr.update() for _ in range(25)])
                 return outputs
 
         def refresh_interface(id):
@@ -3631,6 +3684,7 @@ def web_interface(args, ctx):
                     # FIX: Mark this session as active when conversion starts
                     session_persistence.set_active_session(session['id'])
                     session['progress'] = len(audiobook_options)
+                    session['progress_message'] = 'Starting conversion...'
                     if isinstance(args['ebook_list'], list):
                         ebook_list = args['ebook_list'][:]
                         for file in ebook_list:
@@ -3654,8 +3708,10 @@ def web_interface(args, ctx):
                                         msg = f"{len(args['ebook_list'])} remaining..."
                                     else:
                                         msg = 'Conversion successful!'
+                                    session['progress_message'] = msg
                                     yield gr.update(value=msg)
                         session['status'] = 'ready'
+                        session['progress_message'] = ''
                         # FIX: Clear active_session after batch conversion completes
                         session_persistence.set_active_session(None)
                     else:
@@ -3673,8 +3729,10 @@ def web_interface(args, ctx):
                             show_alert({"type": "success", "msg": progress_status})
                             reset_ebook_session(args['session'])
                             msg = 'Conversion successful!'
+                            session['progress_message'] = msg
                             return gr.update(value=msg)
                 if error is not None:
+                    session['progress_message'] = error
                     show_alert({"type": "warning", "msg": error})
             except Exception as e:
                 error = f'submit_convert_btn(): {e}'
@@ -3737,11 +3795,25 @@ def web_interface(args, ctx):
                 if data['id']:
                     disk_session = load_session_from_disk(data['id'])
                     if disk_session and not session_existed_in_memory:
+                        # Check if conversion is ACTIVELY running IN MEMORY (not just status on disk)
+                        # Since session didn't exist in memory (not session_existed_in_memory),
+                        # there can't be an active conversion, so always restore all data
+                        # This handles crash recovery and normal session loading
+                        is_actively_converting = False  # Can't be active if wasn't in memory
+
                         # Restore session from disk to memory (only if not in memory)
                         for key, value in disk_session.items():
-                            if key not in ['tab_id', 'process_id', 'cancellation_requested']:
-                                # Don't restore runtime-only fields
-                                session[key] = value
+                            # Never restore these runtime fields
+                            if key in ['tab_id', 'process_id', 'cancellation_requested']:
+                                continue
+                            # CRITICAL: Don't overwrite runtime conversion data ONLY during ACTIVE conversion
+                            # chapters, toc contain complex objects not saved to disk (not JSON serializable)
+                            # Since session wasn't in memory, no active conversion, always restore
+                            if is_actively_converting and key in ['chapters', 'toc']:
+                                print(f"⚠️ Skipping restore of '{key}' - active conversion in progress")
+                                continue
+                            # Always restore other fields (including converted_chapters for crash recovery)
+                            session[key] = value
                         print(f"✓ Session {data['id'][:8]} restored from disk")
 
                 # FIX PROBLEM 7 & 10: Use disk status as source of truth, not localStorage
@@ -3866,15 +3938,18 @@ def web_interface(args, ctx):
                             save_session_to_disk(id)
 
                             if session['status'] == 'converting':
+                                # Update progress message in real-time
+                                progress_msg = session.get('progress_message', '')
                                 if session['progress'] != len(audiobook_options):
                                     session['progress'] = len(audiobook_options)
-                                    return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), update_gr_audiobook_list(id)
-                            return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), gr.update()
-                return gr.update(), gr.update(), gr.update()
+                                    return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), update_gr_audiobook_list(id), gr.update(value=progress_msg)
+                                return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), gr.update(), gr.update(value=progress_msg)
+                            return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), gr.update(), gr.update()
+                return gr.update(), gr.update(), gr.update(), gr.update()
             except Exception as e:
                 error = f'save_session(): {e}!'
                 alert_exception(error)
-                return gr.update(), gr.update(value=e), gr.update()
+                return gr.update(), gr.update(value=e), gr.update(), gr.update()
         
         def clear_event(id):
             if id:
@@ -4086,7 +4161,7 @@ def web_interface(args, ctx):
         gr_timer.tick(
             fn=save_session,
             inputs=[gr_session, gr_state_update],
-            outputs=[gr_write_data, gr_state_update, gr_audiobook_list]
+            outputs=[gr_write_data, gr_state_update, gr_audiobook_list, gr_tab_progress]
         ).then(
             fn=clear_event,
             inputs=[gr_session],
@@ -4150,7 +4225,7 @@ def web_interface(args, ctx):
                 gr_output_format_list, gr_audiobook_list, gr_audiobook_vtt,
                 gr_xtts_temperature, gr_xtts_length_penalty, gr_xtts_num_beams, gr_xtts_repetition_penalty,
                 gr_xtts_top_k, gr_xtts_top_p, gr_xtts_speed, gr_xtts_enable_text_splitting, gr_bark_text_temp,
-                gr_bark_waveform_temp, gr_voice_list, gr_output_split, gr_output_split_hours, gr_timer
+                gr_bark_waveform_temp, gr_voice_list, gr_output_split, gr_output_split_hours, gr_timer, gr_tab_progress
             ]
         ).then(
             fn=update_session_selector,
