@@ -109,6 +109,7 @@ class SessionContext:
                 "status": None,
                 "event": None,
                 "progress": 0,
+                "progress_message": "",
                 "cancellation_requested": False,
                 "device": default_device,
                 "system": None,
@@ -3064,14 +3065,14 @@ def web_interface(args, ctx):
                     gr.update(value=session['language']), update_gr_tts_engine_list(id), update_gr_custom_model_list(id),
                     update_gr_fine_tuned_list(id), gr.update(value=session['output_format']), update_gr_audiobook_list(id), gr.update(value=load_vtt_data(session['audiobook'])),
                     gr.update(value=float(session['temperature'])), gr.update(value=float(session['length_penalty'])), gr.update(value=int(session['num_beams'])),
-                    gr.update(value=float(session['repetition_penalty'])), gr.update(value=int(session['top_k'])), gr.update(value=float(session['top_p'])), gr.update(value=float(session['speed'])), 
+                    gr.update(value=float(session['repetition_penalty'])), gr.update(value=int(session['top_k'])), gr.update(value=float(session['top_p'])), gr.update(value=float(session['speed'])),
                     gr.update(value=bool(session['enable_text_splitting'])), gr.update(value=float(session['text_temp'])), gr.update(value=float(session['waveform_temp'])), update_gr_voice_list(id),
-                    gr.update(value=session['output_split']), gr.update(value=session['output_split_hours']), gr.update(active=True)
+                    gr.update(value=session['output_split']), gr.update(value=session['output_split_hours']), gr.update(active=True), gr.update(value=session.get('progress_message', ''))
                 )
             except Exception as e:
                 error = f'restore_interface(): {e}'
                 alert_exception(error)
-                outputs = tuple([gr.update() for _ in range(24)])
+                outputs = tuple([gr.update() for _ in range(25)])
                 return outputs
 
         def refresh_interface(id):
@@ -3631,6 +3632,7 @@ def web_interface(args, ctx):
                     # FIX: Mark this session as active when conversion starts
                     session_persistence.set_active_session(session['id'])
                     session['progress'] = len(audiobook_options)
+                    session['progress_message'] = 'Starting conversion...'
                     if isinstance(args['ebook_list'], list):
                         ebook_list = args['ebook_list'][:]
                         for file in ebook_list:
@@ -3654,8 +3656,10 @@ def web_interface(args, ctx):
                                         msg = f"{len(args['ebook_list'])} remaining..."
                                     else:
                                         msg = 'Conversion successful!'
+                                    session['progress_message'] = msg
                                     yield gr.update(value=msg)
                         session['status'] = 'ready'
+                        session['progress_message'] = ''
                         # FIX: Clear active_session after batch conversion completes
                         session_persistence.set_active_session(None)
                     else:
@@ -3673,8 +3677,10 @@ def web_interface(args, ctx):
                             show_alert({"type": "success", "msg": progress_status})
                             reset_ebook_session(args['session'])
                             msg = 'Conversion successful!'
+                            session['progress_message'] = msg
                             return gr.update(value=msg)
                 if error is not None:
+                    session['progress_message'] = error
                     show_alert({"type": "warning", "msg": error})
             except Exception as e:
                 error = f'submit_convert_btn(): {e}'
@@ -4150,7 +4156,7 @@ def web_interface(args, ctx):
                 gr_output_format_list, gr_audiobook_list, gr_audiobook_vtt,
                 gr_xtts_temperature, gr_xtts_length_penalty, gr_xtts_num_beams, gr_xtts_repetition_penalty,
                 gr_xtts_top_k, gr_xtts_top_p, gr_xtts_speed, gr_xtts_enable_text_splitting, gr_bark_text_temp,
-                gr_bark_waveform_temp, gr_voice_list, gr_output_split, gr_output_split_hours, gr_timer
+                gr_bark_waveform_temp, gr_voice_list, gr_output_split, gr_output_split_hours, gr_timer, gr_tab_progress
             ]
         ).then(
             fn=update_session_selector,
