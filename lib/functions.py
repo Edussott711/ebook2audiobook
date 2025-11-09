@@ -51,7 +51,11 @@ from lib.text.date_converter import year2words, clock2words, get_date_entities
 from lib.text.math_converter import math2words
 from lib.text.normalizer import normalize_text
 # Import refactored SRP modules - Ebook processing
-from lib.ebook.extractor import get_chapters
+from lib.ebook.extractor import get_chapters, get_cover
+from lib.ebook.metadata import get_ebook_title
+from lib.ebook.converter import convert2epub
+# Import refactored SRP modules - Session utilities
+from lib.core.session.session_utils import recursive_proxy
 # Import refactored SRP modules - System utilities
 from lib.system.utils import get_sanitized
 # Import refactored SRP modules - File management
@@ -208,25 +212,6 @@ class SessionContext:
 
 ctx_tracker = SessionTracker()
 
-def recursive_proxy(data, manager=None):
-    if manager is None:
-        manager = Manager()
-    if isinstance(data, dict):
-        proxy_dict = manager.dict()
-        for key, value in data.items():
-            proxy_dict[key] = recursive_proxy(value, manager)
-        return proxy_dict
-    elif isinstance(data, list):
-        proxy_list = manager.list()
-        for item in data:
-            proxy_list.append(recursive_proxy(item, manager))
-        return proxy_list
-    elif isinstance(data, (str, int, float, bool, type(None))):
-        return data
-    else:
-        error = f"Unsupported data type: {type(data)}"
-        print(error)
-        return
 
 
 def check_programs(prog_name, command, options):
@@ -257,131 +242,8 @@ def check_programs(prog_name, command, options):
 
 
 
-def convert2epub(id):
-    session = context.get_session(id)
-    if session['cancellation_requested']:
-        print('Cancel requested')
-        return False
-    try:
-        title = False
-        author = False
-        util_app = shutil.which('ebook-convert')
-        if not util_app:
-            error = "The 'ebook-convert' utility is not installed or not found."
-            print(error)
-            return False
-        file_input = session['ebook']
-        if os.path.getsize(file_input) == 0:
-            error = f"Input file is empty: {file_input}"
-            print(error)
-            return False
-        file_ext = os.path.splitext(file_input)[1].lower()
-        if file_ext not in ebook_formats:
-            error = f'Unsupported file format: {file_ext}'
-            print(error)
-            return False
-        if file_ext == '.pdf':
-            import fitz
-            msg = 'File input is a PDF. flatten it in MarkDown...'
-            print(msg)
-            doc = fitz.open(session['ebook'])
-            pdf_metadata = doc.metadata
-            filename_no_ext = os.path.splitext(os.path.basename(session['ebook']))[0]
-            title = pdf_metadata.get('title') or filename_no_ext
-            author = pdf_metadata.get('author') or False
-            markdown_text = pymupdf4llm.to_markdown(session['ebook'])
-            # Remove single asterisks for italics (but not bold **)
-            markdown_text = re.sub(r'(?<!\*)\*(?!\*)(.*?)\*(?!\*)', r'\1', markdown_text)
-            # Remove single underscores for italics (but not bold __)
-            markdown_text = re.sub(r'(?<!_)_(?!_)(.*?)_(?!_)', r'\1', markdown_text)
-            file_input = os.path.join(session['process_dir'], f'{filename_no_ext}.md')
-            with open(file_input, "w", encoding="utf-8") as html_file:
-                html_file.write(markdown_text)
-        msg = f"Running command: {util_app} {file_input} {session['epub_path']}"
-        print(msg)
-        cmd = [
-                util_app, file_input, session['epub_path'],
-                '--input-encoding=utf-8',
-                '--output-profile=generic_eink',
-                '--epub-version=3',
-                '--flow-size=0',
-                '--chapter-mark=pagebreak',
-                '--page-breaks-before', "//*[name()='h1' or name()='h2' or name()='h3' or name()='h4' or name()='h5']",
-                '--disable-font-rescaling',
-                '--pretty-print',
-                '--smarten-punctuation',
-                '--verbose'
-            ]
-        if title:
-            cmd += ['--title', title]
-        if author:
-            cmd += ['--authors', author]
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding='utf-8'
-        )
-        print(result.stdout)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Subprocess error: {e.stderr}")
-        DependencyError(e)
-        return False
-    except FileNotFoundError as e:
-        print(f"Utility not found: {e}")
-        DependencyError(e)
-        return False
 
-def get_ebook_title(epubBook, all_docs):
-    # 1. Try metadata (official EPUB title)
-    meta_title = epubBook.get_metadata("DC", "title")
-    if meta_title and meta_title[0][0].strip():
-        return meta_title[0][0].strip()
-    # 2. Try <title> in the head of the first XHTML document
-    if all_docs:
-        html = all_docs[0].get_content().decode("utf-8")
-        soup = BeautifulSoup(html, "html.parser")
-        title_tag = soup.select_one("head > title")
-        if title_tag and title_tag.text.strip():
-            return title_tag.text.strip()
-        # 3. Try <img alt="..."> if no visible <title>
-        img = soup.find("img", alt=True)
-        if img:
-            alt = img['alt'].strip()
-            if alt and "cover" not in alt.lower():
-                return alt
-    return None
 
-def get_cover(epubBook, session):
-    try:
-        if session['cancellation_requested']:
-            msg = 'Cancel requested'
-            print(msg)
-            return False
-        cover_image = None
-        cover_path = os.path.join(session['process_dir'], session['filename_noext'] + '.jpg')
-        for item in epubBook.get_items_of_type(ebooklib.ITEM_COVER):
-            cover_image = item.get_content()
-            break
-        if not cover_image:
-            for item in epubBook.get_items_of_type(ebooklib.ITEM_IMAGE):
-                if 'cover' in item.file_name.lower() or 'cover' in item.get_id().lower():
-                    cover_image = item.get_content()
-                    break
-        if cover_image:
-            # Open the image from bytes
-            image = Image.open(io.BytesIO(cover_image))
-            # Convert to RGB if needed (JPEG doesn't support alpha)
-            if image.mode in ('RGBA', 'P'):
-                image = image.convert('RGB')
-            image.save(cover_path, format='JPEG')
-            return cover_path
-        return True
-    except Exception as e:
-        DependencyError(e)
-        return False
 
 
 
