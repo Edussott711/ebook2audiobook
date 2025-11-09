@@ -1459,6 +1459,13 @@ def convert_chapters2audio(id):
             ]
             if resume_sentence not in missing_sentences:
                 missing_sentences.append(resume_sentence)
+
+        # Safety check: ensure chapters list exists and is not None
+        if session.get('chapters') is None:
+            error = 'No chapters found! session[\'chapters\'] is None'
+            print(error)
+            return False
+
         total_chapters = len(session['chapters'])
         if total_chapters == 0:
             error = 'No chapterrs found!'
@@ -1476,6 +1483,13 @@ def convert_chapters2audio(id):
         progress_bar = gr.Progress(track_tqdm=False)
         with tqdm(total=total_iterations, desc='0.00%', bar_format='{desc}: {n_fmt}/{total_fmt} ', unit='step', initial=0) as t:
             for x in range(0, total_chapters):
+                # Safety check: ensure chapters still exists during iteration
+                if session.get('chapters') is None:
+                    error = 'Conversion interrupted: chapters data was cleared'
+                    print(error)
+                    session['progress_message'] = error
+                    return False
+
                 chapter_num = x + 1
                 chapter_audio_file = f'chapter_{chapter_num}.{default_audio_proc_format}'
 
