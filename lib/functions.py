@@ -1498,9 +1498,13 @@ def convert_chapters2audio(id):
                 start = sentence_number
                 msg = f'Block {chapter_num} containing {sentences_count} sentences...'
                 print(msg)
+                # Update progress message in session for real-time tracking
+                progress_msg = f'Processing Block {chapter_num}/{total_chapters} ({sentences_count} sentences)'
+                session['progress_message'] = progress_msg
                 for i, sentence in enumerate(sentences):
                     if session['cancellation_requested']:
                         msg = 'Cancel requested'
+                        session['progress_message'] = 'Conversion cancelled by user'
                         print(msg)
                         return False
                     if sentence_number in missing_sentences or sentence_number > resume_sentence or (sentence_number == 0 and resume_sentence == 0):
@@ -1521,6 +1525,10 @@ def convert_chapters2audio(id):
                             t.set_description(f'{percentage:.2f}%')
                             msg = f" | {sentence}" if is_sentence else f" | {sentence}"
                             print(msg)
+                            # Update progress message with percentage for real-time tracking
+                            if sentence_number % 5 == 0 or sentence_number == total_sentences:  # Update every 5 sentences to avoid too many updates
+                                progress_msg = f'Block {chapter_num}/{total_chapters} - {percentage:.1f}% complete ({sentence_number}/{total_sentences} sentences)'
+                                session['progress_message'] = progress_msg
                         else:
                             return False
                     if sentence and sentence.strip() not in TTS_SML.values():
@@ -1529,6 +1537,9 @@ def convert_chapters2audio(id):
                 end = sentence_number - 1 if sentence_number > 1 else sentence_number
                 msg = f"End of Block {chapter_num}"
                 print(msg)
+                # Update progress message after completing block
+                progress_msg = f'Completed Block {chapter_num}/{total_chapters} - Combining audio...'
+                session['progress_message'] = progress_msg
                 if chapter_num in missing_chapters or sentence_number > resume_sentence:
                     if chapter_num <= resume_chapter:
                         msg = f'**Recovering missing file block {chapter_num}'
@@ -2195,6 +2206,7 @@ def convert_ebook(args, ctx=None):
                                     if convert_chapters2audio(id):
                                         checkpoint_mgr.save_checkpoint('audio_converted')
                                         msg = 'Conversion successful. Combining sentences and chapters...'
+                                        session['progress_message'] = msg
                                         show_alert({"type": "info", "msg": msg})
                                         exported_files = combine_audio_chapters(id)               
                                         if exported_files is not None:
@@ -3872,15 +3884,18 @@ def web_interface(args, ctx):
                             save_session_to_disk(id)
 
                             if session['status'] == 'converting':
+                                # Update progress message in real-time
+                                progress_msg = session.get('progress_message', '')
                                 if session['progress'] != len(audiobook_options):
                                     session['progress'] = len(audiobook_options)
-                                    return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), update_gr_audiobook_list(id)
-                            return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), gr.update()
-                return gr.update(), gr.update(), gr.update()
+                                    return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), update_gr_audiobook_list(id), gr.update(value=progress_msg)
+                                return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), gr.update(), gr.update(value=progress_msg)
+                            return gr.update(value=json.dumps(session_dict, indent=4)), gr.update(value=state), gr.update(), gr.update()
+                return gr.update(), gr.update(), gr.update(), gr.update()
             except Exception as e:
                 error = f'save_session(): {e}!'
                 alert_exception(error)
-                return gr.update(), gr.update(value=e), gr.update()
+                return gr.update(), gr.update(value=e), gr.update(), gr.update()
         
         def clear_event(id):
             if id:
@@ -4092,7 +4107,7 @@ def web_interface(args, ctx):
         gr_timer.tick(
             fn=save_session,
             inputs=[gr_session, gr_state_update],
-            outputs=[gr_write_data, gr_state_update, gr_audiobook_list]
+            outputs=[gr_write_data, gr_state_update, gr_audiobook_list, gr_tab_progress]
         ).then(
             fn=clear_event,
             inputs=[gr_session],
