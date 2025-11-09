@@ -99,7 +99,7 @@ class DependencyError(Exception):
         error = f'Caught DependencyError: {self}'
         print(error)    
         # Exit the script if it's not a web process
-        if not is_gui_process:
+        if not context_module.is_gui_process:
             sys.exit(1)
 
 class SessionTracker:
@@ -108,16 +108,16 @@ class SessionTracker:
 
     def start_session(self, id):
         with self.lock:
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             if session['status'] is None:
                 session['status'] = 'ready'
                 return True
         return False
 
     def end_session(self, id, socket_hash):
-        active_sessions.discard(socket_hash)
+        context_module.active_sessions.discard(socket_hash)
         with self.lock:
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             # Don't cancel the conversion process when Gradio disconnects
             # Only clean up UI-related session metadata
             # session['cancellation_requested'] = True  # Removed - process should continue
@@ -417,7 +417,7 @@ def convert_ebook(args, ctx=None):
             session['language'] = args['language']
             session['language_iso1'] = args['language_iso1']
             session['tts_engine'] = args['tts_engine'] if args['tts_engine'] is not None else get_compatible_tts_engines(args['language'])[0]
-            session['custom_model'] = args['custom_model'] if not is_gui_process or args['custom_model'] is None else os.path.join(session['custom_model_dir'], args['custom_model'])
+            session['custom_model'] = args['custom_model'] if not context_module.is_gui_process or args['custom_model'] is None else os.path.join(session['custom_model_dir'], args['custom_model'])
             session['fine_tuned'] = args['fine_tuned']
             session['voice'] = args['voice']
             session['temperature'] =  args['temperature']
@@ -437,7 +437,7 @@ def convert_ebook(args, ctx=None):
 
             info_session = f"\n*********** Session: {id} **************\nStore it in case of interruption, crash, reuse of custom model or custom voice,\nyou can resume the conversion with --session {id}\n\n💾 Checkpoint System Active:\n  - Progress is automatically saved at key stages\n  - If interrupted, simply restart with the same session ID to resume\n  - Use --force_restart to ignore checkpoints and start fresh"
 
-            if not is_gui_process:
+            if not context_module.is_gui_process:
                 session['voice_dir'] = os.path.join(voices_dir, '__sessions', f"voice-{session['id']}", session['language'])
                 os.makedirs(session['voice_dir'], exist_ok=True)
                 # As now uploaded voice files are in their respective language folder so check if no wav and bark folder are on the voice_dir root from previous versions
@@ -503,7 +503,7 @@ def convert_ebook(args, ctx=None):
                             checkpoint_time = checkpoint_info.get('timestamp', 'unknown')
                             resume_msg = f"\n{'='*60}\n✓ Found existing checkpoint!\n  Stage: {checkpoint_stage}\n  Time: {checkpoint_time}\n  Resuming from last checkpoint...\n{'='*60}\n"
                             print(resume_msg)
-                            if is_gui_process:
+                            if context_module.is_gui_process:
                                 show_alert({"type": "info", "msg": f"Resuming from checkpoint: {checkpoint_stage}"})
                             checkpoint_mgr.restore_from_checkpoint()
 
@@ -541,7 +541,7 @@ def convert_ebook(args, ctx=None):
                         if msg == '':
                             msg = f"Using {session['device'].upper()} - "
                         msg += msg_extra
-                        if is_gui_process:
+                        if context_module.is_gui_process:
                             show_alert({"type": "warning", "msg": msg})
                         print(msg)
                         session['epub_path'] = os.path.join(session['process_dir'], '__' + session['filename_noext'] + '.epub')
@@ -592,7 +592,7 @@ def convert_ebook(args, ctx=None):
                                                 if fnmatch.fnmatch(dir_name, "chapters_*") and os.path.isdir(os.path.join(session['process_dir'], dir_name))
                                             ]
                                             shutil.rmtree(os.path.join(session['voice_dir'], 'proc'), ignore_errors=True)
-                                            if is_gui_process:
+                                            if context_module.is_gui_process:
                                                 if len(chapters_dirs) > 1:
                                                     if os.path.exists(session['chapters_dir']):
                                                         shutil.rmtree(session['chapters_dir'], ignore_errors=True)
@@ -636,7 +636,7 @@ def convert_ebook(args, ctx=None):
         if session['cancellation_requested']:
             error = 'Cancelled'
         else:
-            if not is_gui_process and id is not None:
+            if not context_module.is_gui_process and id is not None:
                 error += info_session
         print(error)
         return error, False
@@ -656,7 +656,7 @@ def restore_session_from_data(data, session):
         DependencyError(e)
 
 def reset_ebook_session(id):
-    session = context.get_session(id)
+    session = context_module.context.get_session(id)
     # FIX: Clear active_session when conversion completes
     # This is called after successful conversion
     from lib.session_persistence import SessionPersistence
@@ -757,7 +757,7 @@ def web_interface(args, ctx):
     def save_session_to_disk(id):
         """Save current session to disk."""
         try:
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             if session and session.get('id'):
                 # Add created_at timestamp if not present
                 if 'created_at' not in session:
@@ -1199,8 +1199,8 @@ def web_interface(args, ctx):
 
         def cleanup_session(req: gr.Request):
             socket_hash = req.session_hash
-            if any(socket_hash in session for session in context.sessions.values()):
-                session_id = context.find_id_by_hash(socket_hash)
+            if any(socket_hash in session for session in context_module.context.sessions.values()):
+                session_id = context_module.context.find_id_by_hash(socket_hash)
                 ctx_tracker.end_session(session_id, socket_hash)
 
         def load_vtt_data(path):
@@ -1360,7 +1360,7 @@ def web_interface(args, ctx):
                 if selected_session == 'New Session':
                     # Create a new session
                     new_id = str(uuid.uuid4())
-                    session = context.get_session(new_id)
+                    session = context_module.context.get_session(new_id)
                     # Add created_at timestamp
                     session['created_at'] = datetime.now().isoformat()
 
@@ -1393,7 +1393,7 @@ def web_interface(args, ctx):
                         disk_session = load_session_from_disk(session_id)
                         if disk_session:
                             # Get or create session in memory
-                            session = context.get_session(session_id)
+                            session = context_module.context.get_session(session_id)
                             # Restore all fields from disk
                             for key, value in disk_session.items():
                                 if key not in ['tab_id', 'process_id', 'cancellation_requested']:
@@ -1420,7 +1420,7 @@ def web_interface(args, ctx):
 
         def restore_interface(id, req: gr.Request):
             try:
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 socket_hash = req.session_hash
                 # Don't check socket_hash - it may not exist yet during reconnection
                 # The session itself is enough to restore the interface
@@ -1464,14 +1464,14 @@ def web_interface(args, ctx):
                 return outputs
 
         def refresh_interface(id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             return (
                     gr.update(interactive=False), gr.update(value=None), update_gr_audiobook_list(id), 
                     gr.update(value=session['audiobook']), gr.update(visible=False), update_gr_voice_list(id)
             )
 
         def change_gr_audiobook_list(selected, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['audiobook'] = selected
             if selected is not None:
                 audio_info = mediainfo(selected)
@@ -1508,7 +1508,7 @@ def web_interface(args, ctx):
         def change_gr_ebook_file(data, id):
             import time
             try:
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 session['ebook'] = None
                 session['ebook_list'] = None
                 if data is None:
@@ -1523,7 +1523,7 @@ def web_interface(args, ctx):
                         while session['status'] == 'converting' and waited < max_wait:
                             time.sleep(0.5)
                             waited += 0.5
-                            session = context.get_session(id)  # Refresh session
+                            session = context_module.context.get_session(id)  # Refresh session
 
                         # Ensure status is reset
                         if session['status'] == 'converting':
@@ -1542,7 +1542,7 @@ def web_interface(args, ctx):
             return gr.update(visible=False)
             
         def change_gr_ebook_mode(val, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['ebook_mode'] = val
             if val == 'single':
                 return gr.update(label=src_label_file, value=None, file_count='single')
@@ -1561,7 +1561,7 @@ def web_interface(args, ctx):
                     state['type'] = 'warning'
                     state['msg'] = error
                 else:                  
-                    session = context.get_session(id)
+                    session = context_module.context.get_session(id)
                     voice_name = os.path.splitext(os.path.basename(f))[0].replace('&', 'And')
                     voice_name = get_sanitized(voice_name)
                     final_voice_file = os.path.join(session['voice_dir'], f'{voice_name}.wav')
@@ -1581,7 +1581,7 @@ def web_interface(args, ctx):
             return gr.update()
 
         def change_gr_voice_list(selected, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['voice'] = next((value for label, value in voice_options if value == selected), None)
             visible = True if session['voice'] is not None else False
             min_width = 60 if session['voice'] is not None else 0
@@ -1590,7 +1590,7 @@ def web_interface(args, ctx):
         def click_gr_voice_del_btn(selected, id):
             try:
                 if selected is not None:
-                    session = context.get_session(id)
+                    session = context_module.context.get_session(id)
                     speaker_path = os.path.abspath(selected)
                     speaker = re.sub(r'\.wav$|\.npz$', '', os.path.basename(selected))
                     builtin_root = os.path.join(voices_dir, session['language'])
@@ -1635,7 +1635,7 @@ def web_interface(args, ctx):
         def click_gr_custom_model_del_btn(selected, id):
             try:
                 if selected is not None:
-                    session = context.get_session(id)
+                    session = context_module.context.get_session(id)
                     selected_name = os.path.basename(selected)
                     msg = f'Are you sure to delete {selected_name}...'
                     return gr.update(value='confirm_custom_model_del'), gr.update(value=show_modal('confirm', msg),visible=True), gr.update(visible=True), gr.update(visible=True)
@@ -1647,7 +1647,7 @@ def web_interface(args, ctx):
         def click_gr_audiobook_del_btn(selected, id):
             try:
                 if selected is not None:
-                    session = context.get_session(id)
+                    session = context_module.context.get_session(id)
                     selected_name = Path(selected).stem
                     msg = f'Are you sure to delete {selected_name}...'
                     return gr.update(value='confirm_audiobook_del'), gr.update(value=show_modal('confirm', msg),visible=True), gr.update(visible=True), gr.update(visible=True)
@@ -1659,7 +1659,7 @@ def web_interface(args, ctx):
         def confirm_deletion(voice_path, custom_model, audiobook, id, method=None):
             try:
                 if method is not None:
-                    session = context.get_session(id)
+                    session = context_module.context.get_session(id)
                     if method == 'confirm_voice_del':
                         selected_name = Path(voice_path).stem
                         pattern = re.sub(r'\.wav$', '*.wav', voice_path)
@@ -1705,7 +1705,7 @@ def web_interface(args, ctx):
         def update_gr_voice_list(id):
             try:
                 nonlocal voice_options
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 lang_dir = session['language'] if session['language'] != 'con' else 'con-'  # Bypass Windows CON reserved name
                 file_pattern = "*.wav"
                 eng_options = []
@@ -1780,7 +1780,7 @@ def web_interface(args, ctx):
         def update_gr_tts_engine_list(id):
             try:
                 nonlocal tts_engine_options
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 # Ensure language is set, use default if not
                 if not session.get('language'):
                     session['language'] = default_language_code
@@ -1800,7 +1800,7 @@ def web_interface(args, ctx):
         def update_gr_custom_model_list(id):
             try:
                 nonlocal custom_model_options
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 custom_model_tts_dir = check_custom_model_tts(session['custom_model_dir'], session['tts_engine'])
                 custom_model_options = [('None', None)] + [
                     (
@@ -1820,7 +1820,7 @@ def web_interface(args, ctx):
         def update_gr_fine_tuned_list(id):
             try:
                 nonlocal fine_tuned_options
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 fine_tuned_options = [
                     name for name, details in models.get(session['tts_engine'],{}).items()
                     if details.get('lang') == 'multi' or details.get('lang') == session['language']
@@ -1833,12 +1833,12 @@ def web_interface(args, ctx):
                 return gr.update()
 
         def change_gr_device(device, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['device'] = device
 
         def change_gr_language(selected, id):
             if selected:
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 prev = session['language']      
                 session['language'] = selected
                 return[
@@ -1866,7 +1866,7 @@ def web_interface(args, ctx):
                         state['type'] = 'warning'
                         state['msg'] = error
                     else:
-                        session = context.get_session(id)
+                        session = context_module.context.get_session(id)
                         session['tts_engine'] = t
                         required_files = models[session['tts_engine']]['internal']['files']
                         if analyze_uploaded_file(f, required_files):
@@ -1897,7 +1897,7 @@ def web_interface(args, ctx):
             return gr.update()
 
         def change_gr_tts_engine_list(engine, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['tts_engine'] = engine
             default_voice_path = models[session['tts_engine']][session['fine_tuned']]['voice']
             if default_voice_path is None:
@@ -1923,7 +1923,7 @@ def web_interface(args, ctx):
                 
         def change_gr_fine_tuned_list(selected, id):
             if selected:
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 visible = False
                 if session['tts_engine'] == TTS_ENGINES['XTTSv2']:
                     if selected == 'internal':
@@ -1933,33 +1933,33 @@ def web_interface(args, ctx):
             return gr.update()
 
         def change_gr_custom_model_list(selected, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['custom_model'] = next((value for label, value in custom_model_options if value == selected), None)
             visible = True if session['custom_model'] is not None else False
             return gr.update(visible=not visible), gr.update(visible=visible)
         
         def change_gr_output_format_list(val, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['output_format'] = val
             return
             
         def change_gr_output_split(bool, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['output_split'] = bool
             return gr.update(visible=bool)
 
         def change_gr_output_split_hours(selected, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['output_split_hours'] = selected
             return
 
         def change_gr_audiobook_player_playback_time(str, id):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session['playback_time'] = float(str)
             return
 
         def change_param(key, val, id, val2=None):
-            session = context.get_session(id)
+            session = context_module.context.get_session(id)
             session[key] = val
             state = {}
             if key == 'length_penalty':
@@ -1984,7 +1984,7 @@ def web_interface(args, ctx):
                 output_split, output_split_hours, scan_chapters
             ):
             try:
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 args = {
                     "is_gui_process": is_gui_process,
                     "session": id,
@@ -2088,7 +2088,7 @@ def web_interface(args, ctx):
         def update_gr_audiobook_list(id):
             try:
                 nonlocal audiobook_options
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 # Check if audiobooks_dir is initialized before using it
                 if not session.get('audiobooks_dir') or not os.path.exists(session['audiobooks_dir']):
                     return gr.update(choices=[], value=None)
@@ -2123,17 +2123,17 @@ def web_interface(args, ctx):
 
                 # FIX PROBLEM 1: Create new session and save immediately
                 if data is None or not isinstance(data, dict) or 'id' not in data:
-                    new_session = context.get_session(str(uuid.uuid4()))
+                    new_session = context_module.context.get_session(str(uuid.uuid4()))
                     # Save new session to disk immediately
                     save_session_to_disk(new_session['id'])
                     print(f"✓ Created and saved new session: {new_session['id'][:8]}")
                     data = new_session
 
                 # Check if this session existed before (to detect fresh server start after Docker restart)
-                session_existed_in_memory = data['id'] in context.sessions
+                session_existed_in_memory = data['id'] in context_module.context.sessions
 
                 # Get or create session in memory
-                session = context.get_session(data['id'])
+                session = context_module.context.get_session(data['id'])
 
                 # FIX PROBLEM 11: Load from disk FIRST, before any other restoration
                 # This ensures disk data takes precedence over potentially stale localStorage data
@@ -2163,14 +2163,14 @@ def web_interface(args, ctx):
 
                 # FIX PROBLEM 10: Better reconnection detection
                 # Check if this socket hash already exists for this session (true reconnect)
-                is_existing_socket = req.session_hash in session.keys() and req.session_hash in active_sessions
+                is_existing_socket = req.session_hash in session.keys() and req.session_hash in context_module.active_sessions
 
                 # Count active socket connections for this session
-                active_socket_count = sum(1 for hash_key in active_sessions if hash_key in session.keys())
+                active_socket_count = sum(1 for hash_key in context_module.active_sessions if hash_key in session.keys())
                 has_no_active_sockets = active_socket_count == 0
 
                 # Only restore from localStorage if it's a same-tab reconnect or no active sessions
-                if same_tab_reconnecting or len(active_sessions) == 0 or has_no_active_sockets:
+                if same_tab_reconnecting or len(context_module.active_sessions) == 0 or has_no_active_sockets:
                     restore_session_from_data(data, session)
 
                 # FIX PROBLEM 3: Don't reset status if conversion is in progress
@@ -2189,7 +2189,7 @@ def web_interface(args, ctx):
                         return gr.update(), gr.update(), gr.update(value=''), update_gr_glass_mask(str=error)
 
                 # Register this socket connection
-                active_sessions.add(req.session_hash)
+                context_module.active_sessions.add(req.session_hash)
                 session[req.session_hash] = req.session_hash
                 session['cancellation_requested'] = False
                 if isinstance(session['ebook'], str):
@@ -2252,8 +2252,8 @@ def web_interface(args, ctx):
         def save_session(id, state):
             try:
                 if id:
-                    if id in context.sessions:
-                        session = context.get_session(id)
+                    if id in context_module.context.sessions:
+                        session = context_module.context.get_session(id)
                         if session:
                             if session['event'] == 'clear':
                                 session_dict = session
@@ -2282,7 +2282,7 @@ def web_interface(args, ctx):
         
         def clear_event(id):
             if id:
-                session = context.get_session(id)
+                session = context_module.context.get_session(id)
                 if session['event'] is not None:
                     session['event'] = None
 
