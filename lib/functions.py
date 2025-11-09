@@ -3038,23 +3038,30 @@ def web_interface(args, ctx):
                         # Load session from disk
                         disk_session = load_session_from_disk(session_id)
                         if disk_session:
+                            # Check if session already exists in memory with active conversion
+                            session_exists_in_memory = session_id in context.sessions
+
                             # Get or create session in memory
                             session = context.get_session(session_id)
 
-                            # Check if conversion is actively running
-                            is_converting = disk_session.get('status') == 'converting'
+                            # Check if conversion is ACTIVELY running IN MEMORY (not just status on disk)
+                            # A session is truly active only if it exists in memory AND is converting AND has runtime data
+                            is_actively_converting = (session_exists_in_memory and
+                                                     session.get('status') == 'converting' and
+                                                     session.get('chapters') is not None)
 
                             # Restore all fields from disk
                             for key, value in disk_session.items():
                                 # Never restore these runtime fields
                                 if key in ['tab_id', 'process_id', 'cancellation_requested']:
                                     continue
-                                # CRITICAL: Don't overwrite runtime conversion data during active conversion
+                                # CRITICAL: Don't overwrite runtime conversion data ONLY during ACTIVE conversion
                                 # chapters, toc contain complex objects not saved to disk (not JSON serializable)
-                                if is_converting and key in ['chapters', 'toc', 'converted_chapters']:
-                                    print(f"⚠️ Skipping restore of '{key}' - conversion in progress")
+                                # Only protect if conversion is truly running in memory with live data
+                                if is_actively_converting and key in ['chapters', 'toc']:
+                                    print(f"⚠️ Skipping restore of '{key}' - active conversion in progress")
                                     continue
-                                # Restore other fields normally
+                                # Always restore other fields (including converted_chapters for crash recovery)
                                 session[key] = value
 
                             # FIX PROBLEM 5: Save session to disk after switching
@@ -3788,20 +3795,24 @@ def web_interface(args, ctx):
                 if data['id']:
                     disk_session = load_session_from_disk(data['id'])
                     if disk_session and not session_existed_in_memory:
-                        # Check if conversion is actively running
-                        is_converting = disk_session.get('status') == 'converting'
+                        # Check if conversion is ACTIVELY running IN MEMORY (not just status on disk)
+                        # Since session didn't exist in memory (not session_existed_in_memory),
+                        # there can't be an active conversion, so always restore all data
+                        # This handles crash recovery and normal session loading
+                        is_actively_converting = False  # Can't be active if wasn't in memory
 
                         # Restore session from disk to memory (only if not in memory)
                         for key, value in disk_session.items():
                             # Never restore these runtime fields
                             if key in ['tab_id', 'process_id', 'cancellation_requested']:
                                 continue
-                            # CRITICAL: Don't overwrite runtime conversion data during active conversion
+                            # CRITICAL: Don't overwrite runtime conversion data ONLY during ACTIVE conversion
                             # chapters, toc contain complex objects not saved to disk (not JSON serializable)
-                            if is_converting and key in ['chapters', 'toc', 'converted_chapters']:
-                                print(f"⚠️ Skipping restore of '{key}' - conversion in progress")
+                            # Since session wasn't in memory, no active conversion, always restore
+                            if is_actively_converting and key in ['chapters', 'toc']:
+                                print(f"⚠️ Skipping restore of '{key}' - active conversion in progress")
                                 continue
-                            # Restore other fields normally
+                            # Always restore other fields (including converted_chapters for crash recovery)
                             session[key] = value
                         print(f"✓ Session {data['id'][:8]} restored from disk")
 
