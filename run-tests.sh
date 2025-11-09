@@ -34,40 +34,41 @@ MODE="${1:-all}"
 case "$MODE" in
   "audio")
     echo -e "${BLUE}🎵 Running audio tests...${NC}"
-    docker run --rm ebook2audiobook pytest tests/test_audio/ -v --tb=short
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/test_audio/ -v --tb=short
     ;;
 
   "text")
     echo -e "${BLUE}📝 Running text tests...${NC}"
-    docker run --rm ebook2audiobook pytest tests/test_text/ -v --tb=short
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/test_text/ -v --tb=short
     ;;
 
   "ebook")
     echo -e "${BLUE}📚 Running ebook tests...${NC}"
-    docker run --rm ebook2audiobook pytest tests/test_ebook/ -v --tb=short
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/test_ebook/ -v --tb=short
     ;;
 
   "file")
     echo -e "${BLUE}📁 Running file tests...${NC}"
-    docker run --rm ebook2audiobook pytest tests/test_file/ -v --tb=short
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/test_file/ -v --tb=short
     ;;
 
   "core")
     echo -e "${BLUE}⚙️  Running core tests...${NC}"
-    docker run --rm ebook2audiobook pytest tests/test_core/ -v --tb=short
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/test_core/ -v --tb=short
     ;;
 
   "quick")
     echo -e "${BLUE}⚡ Running quick smoke test...${NC}"
-    docker run --rm ebook2audiobook pytest tests/ --maxfail=1 -x -v --tb=line
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/ --maxfail=1 -x -v --tb=line
     ;;
 
   "coverage")
     echo -e "${BLUE}📊 Running tests with coverage...${NC}"
     docker run --rm \
+      --entrypoint "python3 -m pytest" \
       -v $(pwd)/reports:/app/reports \
       ebook2audiobook \
-      pytest tests/ \
+      tests/ \
         -v \
         --cov=lib \
         --cov-report=term-missing \
@@ -83,25 +84,26 @@ case "$MODE" in
 
   "parallel")
     echo -e "${BLUE}⚡ Running tests in parallel...${NC}"
-    docker run --rm ebook2audiobook pytest tests/ -n auto -v --tb=short
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/ -n auto -v --tb=short
     ;;
 
   "debug")
     echo -e "${BLUE}🐛 Running tests in debug mode...${NC}"
-    docker run --rm -it ebook2audiobook pytest tests/ -vv -s --tb=long --pdb
+    docker run --rm -it --entrypoint "python3 -m pytest" ebook2audiobook tests/ -vv -s --tb=long --pdb
     ;;
 
   "failed")
     echo -e "${BLUE}🔁 Re-running failed tests...${NC}"
-    docker run --rm ebook2audiobook pytest tests/ --lf -v --tb=short
+    docker run --rm --entrypoint "python3 -m pytest" ebook2audiobook tests/ --lf -v --tb=short
     ;;
 
   "all"|*)
     echo -e "${BLUE}🚀 Running all tests...${NC}"
     docker run --rm \
+      --entrypoint "python3 -m pytest" \
       -v $(pwd)/reports:/app/reports \
       ebook2audiobook \
-      pytest tests/ \
+      tests/ \
         -v \
         --tb=short \
         --maxfail=10

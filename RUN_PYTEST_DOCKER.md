@@ -29,7 +29,7 @@ tests/
 docker build -t ebook2audiobook .
 
 # Lancer tous les tests
-docker run --rm ebook2audiobook pytest tests/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -v
 ```
 
 **Options utiles:**
@@ -47,29 +47,29 @@ docker run --rm ebook2audiobook pytest tests/ -v
 
 ```bash
 # Tests audio uniquement
-docker run --rm ebook2audiobook pytest tests/test_audio/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/test_audio/ -v
 
 # Tests text uniquement
-docker run --rm ebook2audiobook pytest tests/test_text/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/test_text/ -v
 
 # Tests ebook uniquement
-docker run --rm ebook2audiobook pytest tests/test_ebook/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/test_ebook/ -v
 
 # Tests file uniquement
-docker run --rm ebook2audiobook pytest tests/test_file/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/test_file/ -v
 
 # Tests core uniquement
-docker run --rm ebook2audiobook pytest tests/test_core/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/test_core/ -v
 ```
 
 ### 2️⃣ Tests par fichier
 
 ```bash
 # Un fichier spécifique
-docker run --rm ebook2audiobook pytest tests/test_text/test_date_converter.py -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/test_text/test_date_converter.py -v
 
 # Plusieurs fichiers
-docker run --rm ebook2audiobook pytest \
+docker run --rm --entrypoint pytest ebook2audiobook \
   tests/test_text/test_date_converter.py \
   tests/test_text/test_math_converter.py \
   -v
@@ -79,11 +79,11 @@ docker run --rm ebook2audiobook pytest \
 
 ```bash
 # Une fonction spécifique
-docker run --rm ebook2audiobook pytest \
+docker run --rm --entrypoint pytest ebook2audiobook \
   tests/test_text/test_date_converter.py::test_year2words -v
 
 # Pattern matching
-docker run --rm ebook2audiobook pytest \
+docker run --rm --entrypoint pytest ebook2audiobook \
   tests/test_text/ -k "test_year" -v
 ```
 
@@ -93,7 +93,7 @@ docker run --rm ebook2audiobook pytest \
 
 ```bash
 # Avec couverture de code
-docker run --rm ebook2audiobook pytest tests/ \
+docker run --rm --entrypoint pytest ebook2audiobook tests/ \
   --cov=lib \
   --cov-report=html \
   --cov-report=term
@@ -111,13 +111,13 @@ docker run --rm -v $(pwd)/htmlcov:/app/htmlcov ebook2audiobook \
 
 ```bash
 # Avec pdb (debugger Python)
-docker run --rm -it ebook2audiobook pytest tests/ --pdb
+docker run --rm -it --entrypoint pytest ebook2audiobook tests/ --pdb
 
 # Afficher les prints
-docker run --rm ebook2audiobook pytest tests/ -s
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -s
 
 # Traceback complet
-docker run --rm ebook2audiobook pytest tests/ --tb=long
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --tb=long
 ```
 
 ---
@@ -128,10 +128,10 @@ docker run --rm ebook2audiobook pytest tests/ --tb=long
 # Installer pytest-xdist (si pas déjà dans requirements)
 # Puis lancer en parallèle
 
-docker run --rm ebook2audiobook pytest tests/ -n auto -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -n auto -v
 
 # Spécifier nombre de workers
-docker run --rm ebook2audiobook pytest tests/ -n 4 -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -n 4 -v
 ```
 
 ---
@@ -140,13 +140,13 @@ docker run --rm ebook2audiobook pytest tests/ -n 4 -v
 
 ```bash
 # Tests qui contiennent "converter" dans le nom
-docker run --rm ebook2audiobook pytest tests/ -k "converter" -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -k "converter" -v
 
 # Tests SAUF ceux qui contiennent "slow"
-docker run --rm ebook2audiobook pytest tests/ -k "not slow" -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -k "not slow" -v
 
 # Plusieurs patterns
-docker run --rm ebook2audiobook pytest tests/ -k "audio or text" -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -k "audio or text" -v
 ```
 
 ---
@@ -155,16 +155,16 @@ docker run --rm ebook2audiobook pytest tests/ -k "audio or text" -v
 
 ```bash
 # Tests marqués comme "unit"
-docker run --rm ebook2audiobook pytest tests/ -m "unit" -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -m "unit" -v
 
 # Tests marqués comme "integration"
-docker run --rm ebook2audiobook pytest tests/ -m "integration" -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -m "integration" -v
 
 # Tests marqués comme "slow"
-docker run --rm ebook2audiobook pytest tests/ -m "slow" -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -m "slow" -v
 
 # Exclure un marker
-docker run --rm ebook2audiobook pytest tests/ -m "not slow" -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -m "not slow" -v
 ```
 
 ---
@@ -173,13 +173,13 @@ docker run --rm ebook2audiobook pytest tests/ -m "not slow" -v
 
 ```bash
 # Premier run
-docker run --rm ebook2audiobook pytest tests/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -v
 
 # Re-run seulement les tests échoués
-docker run --rm ebook2audiobook pytest tests/ --lf -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --lf -v
 
 # Re-run échoués d'abord, puis tous
-docker run --rm ebook2audiobook pytest tests/ --ff -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --ff -v
 ```
 
 ---
@@ -212,10 +212,10 @@ docker run --rm \
 
 ```bash
 # Activer les couleurs
-docker run --rm -t ebook2audiobook pytest tests/ --color=yes -v
+docker run --rm -t --entrypoint pytest ebook2audiobook tests/ --color=yes -v
 
 # Désactiver les couleurs
-docker run --rm ebook2audiobook pytest tests/ --color=no -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --color=no -v
 ```
 
 ---
@@ -235,7 +235,7 @@ docker run --rm \
 
 ```bash
 # Test rapide : 1 test par module pour vérifier que tout importe
-docker run --rm ebook2audiobook pytest tests/ --maxfail=1 -x -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --maxfail=1 -x -v
 ```
 
 ---
@@ -279,16 +279,16 @@ docker run --rm ebook2audiobook \
 
 ```bash
 # Lister tous les tests sans les exécuter
-docker run --rm ebook2audiobook pytest tests/ --collect-only
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --collect-only
 
 # Afficher les fixtures disponibles
-docker run --rm ebook2audiobook pytest tests/ --fixtures
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --fixtures
 
 # Statistiques détaillées
-docker run --rm ebook2audiobook pytest tests/ -v --durations=10
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -v --durations=10
 
 # Version de pytest
-docker run --rm ebook2audiobook pytest --version
+docker run --rm --entrypoint pytest ebook2audiobook --version
 ```
 
 ---
@@ -357,7 +357,7 @@ docker run --rm \
 docker run --rm ebook2audiobook pwd
 
 # Forcer le working directory
-docker run --rm -w /app ebook2audiobook pytest tests/ -v
+docker run --rm -w /app --entrypoint pytest ebook2audiobook tests/ -v
 ```
 
 ### Problème: Import des modules SRP
@@ -387,19 +387,19 @@ print('✅ Imports OK')
 
 ```bash
 # 1. Tests passent ?
-docker run --rm ebook2audiobook pytest tests/ -v
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -v
 
 # 2. Couverture OK ?
-docker run --rm ebook2audiobook pytest tests/ --cov=lib --cov-report=term
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --cov=lib --cov-report=term
 
 # 3. Pas de tests cassés ?
-docker run --rm ebook2audiobook pytest tests/ --tb=short
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --tb=short
 
 # 4. Performance OK ?
-docker run --rm ebook2audiobook pytest tests/ --durations=10
+docker run --rm --entrypoint pytest ebook2audiobook tests/ --durations=10
 ```
 
 🎯 **Commande recommandée pour développement:**
 ```bash
-docker run --rm ebook2audiobook pytest tests/ -v --tb=short -x
+docker run --rm --entrypoint pytest ebook2audiobook tests/ -v --tb=short -x
 ```
