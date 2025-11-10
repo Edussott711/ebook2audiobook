@@ -537,6 +537,59 @@ def get_normalization_language(session):
 
     return lang, lang_iso1
 
+def split_oversized_sentence(sentence, max_chars, lang):
+    """
+    Split a sentence that exceeds max_chars into smaller chunks.
+
+    This is a fallback for when translation produces sentences longer than
+    the target language's character limit. It tries to split on word boundaries
+    while respecting the max_chars limit.
+
+    Args:
+        sentence: The sentence to split
+        max_chars: Maximum characters per chunk
+        lang: Language code for the sentence
+
+    Returns:
+        list: List of sentence chunks, each within max_chars limit
+
+    Example:
+        >>> sentence = "This is a very long sentence that exceeds the maximum character limit..."
+        >>> chunks = split_oversized_sentence(sentence, 50, 'eng')
+        >>> all(len(c) <= 50 for c in chunks)
+        True
+    """
+    if len(sentence) <= max_chars:
+        return [sentence]
+
+    chunks = []
+    words = sentence.split(' ')
+    current_chunk = ''
+
+    for word in words:
+        # If adding this word would exceed limit
+        if len(current_chunk) + len(word) + 1 > max_chars:
+            # Save current chunk if it has content
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = word
+            else:
+                # Word itself is too long, split it forcefully
+                chunks.append(word[:max_chars])
+                current_chunk = word[max_chars:]
+        else:
+            # Add word to current chunk
+            if current_chunk:
+                current_chunk += ' ' + word
+            else:
+                current_chunk = word
+
+    # Don't forget the last chunk
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
 def protect_sml_markers(text):
     """
     Protect SML (Speech Markup Language) markers from translation.
@@ -890,7 +943,15 @@ def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_co
         text = text.translate(specialchars_remove_table)
         text = normalize_text(text, lang, lang_iso1, tts_engine)
 
-        # Translation step (if enabled)
+        # STEP 1: Split text into sentences BEFORE translation (using SOURCE language)
+        # This ensures each sentence is within the max_chars limit for the source language
+        sentences = get_sentences(text, lang, tts_engine)
+        if len(sentences) == 0:
+            error = 'No sentences found!'
+            print(error)
+            return None
+
+        # STEP 2: Translation step (if enabled) - translate each sentence individually
         if session and session.get('enable_translation', False):
             try:
                 from lib.classes.argos_translator import ArgosTranslator
@@ -899,44 +960,75 @@ def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_co
                 target_lang = session.get('target_language_iso1', lang_iso1)
 
                 if source_lang != target_lang:
-                    print(f"🌐 Translating text from {source_lang} to {target_lang}...")
+                    print(f"🌐 Translating {len(sentences)} sentences from {source_lang} to {target_lang}...")
 
-                    # CRITICAL: Protect SML markers (‡break‡, ‡pause‡) from translation
-                    # If we don't do this, markers will be translated to normal words
-                    # Example: "‡break‡" → "break" (French) or "break" (English)
-                    # and the TTS engine will pronounce them instead of creating silences
-                    protected_text, marker_map = protect_sml_markers(text)
+                    # Get target language max_chars limit
+                    target_language = session.get('target_language')
+                    target_max_chars = language_mapping.get(target_language, {}).get('max_chars', 250) - 4
 
                     translator = ArgosTranslator()
                     error, status = translator.start(source_lang, target_lang)
 
                     if status:
-                        translated_text, success = translator.process(protected_text)
-                        if success:
-                            # Restore SML markers after translation
-                            text = restore_sml_markers(translated_text, marker_map)
-                            # Update language for sentence splitting to use target language
-                            lang = session.get('target_language', lang)
-                            lang_iso1 = target_lang
-                            tts_engine = session.get('tts_engine', tts_engine)
-                            print(f"✅ Translation successful!")
+                        translated_sentences = []
+                        failed_count = 0
+                        oversized_count = 0
+
+                        for i, sentence in enumerate(sentences):
+                            # Skip SML markers - they should never be translated
+                            if sentence in [TTS_SML['break'], TTS_SML['pause']]:
+                                translated_sentences.append(sentence)
+                                continue
+
+                            # Protect SML markers that might be embedded in the sentence
+                            protected_sentence, marker_map = protect_sml_markers(sentence)
+
+                            # Translate the sentence
+                            translated_text, success = translator.process(protected_sentence)
+
+                            if success:
+                                # Restore SML markers after translation
+                                restored_sentence = restore_sml_markers(translated_text, marker_map)
+
+                                # CRITICAL: Check if translated sentence exceeds target language max_chars
+                                # Translation can produce longer text than the source
+                                if len(restored_sentence) > target_max_chars:
+                                    oversized_count += 1
+                                    # Split oversized sentence into smaller chunks
+                                    chunks = split_oversized_sentence(restored_sentence, target_max_chars, target_language)
+                                    translated_sentences.extend(chunks)
+                                else:
+                                    translated_sentences.append(restored_sentence)
+                            else:
+                                # If translation fails, keep original sentence
+                                failed_count += 1
+                                translated_sentences.append(sentence)
+
+                        # Update sentences with translated versions
+                        sentences = translated_sentences
+
+                        # Update language for TTS to use target language
+                        lang = session.get('target_language', lang)
+                        lang_iso1 = target_lang
+                        tts_engine = session.get('tts_engine', tts_engine)
+
+                        if failed_count > 0 or oversized_count > 0:
+                            msg = f"⚠️ Translation completed: {len(sentences)} sentences total"
+                            if failed_count > 0:
+                                msg += f", {failed_count} failures"
+                            if oversized_count > 0:
+                                msg += f", {oversized_count} split due to length"
+                            print(msg)
                         else:
-                            print(f"⚠️ Translation failed: {translated_text}")
+                            print(f"✅ Translation successful! Translated {len(sentences)} sentences")
                     else:
                         print(f"⚠️ Translation initialization failed: {error}")
+                        print(f"⚠️ Continuing with original text without translation")
             except Exception as e:
                 print(f"⚠️ Translation error: {e}")
+                print(f"⚠️ Continuing with original text without translation")
 
-        # Ensure space before and after punctuation_list
-        #pattern_space = re.escape(''.join(punctuation_list))
-        #punctuation_pattern_space = r'(?<!\s)([{}])'.format(pattern_space)
-        #text = re.sub(punctuation_pattern_space, r' \1', text)
-        sentences = get_sentences(text, lang, tts_engine)
-        if len(sentences) == 0:
-            error = 'No sentences found!'
-            print(error)
-            return None
-        return get_sentences(text, lang, tts_engine)
+        return sentences
     except Exception as e:
         error = f'filter_chapter() error: {e}'
         DependencyError(error)
