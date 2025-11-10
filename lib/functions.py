@@ -116,6 +116,11 @@ class SessionContext:
                 "client": None,
                 "language": default_language_code,
                 "language_iso1": None,
+                "enable_translation": False,
+                "source_language": default_language_code,
+                "source_language_iso1": None,
+                "target_language": default_language_code,
+                "target_language_iso1": None,
                 "audiobook": None,
                 "audiobooks_dir": None,
                 "process_dir": None,
@@ -3560,15 +3565,38 @@ def web_interface(args, ctx):
         def change_gr_language(selected, id):
             if selected:
                 session = context.get_session(id)
-                prev = session['language']      
-                session['language'] = selected
+                session['source_language'] = selected
+                # If translation is not enabled, source language is also the TTS language
+                if not session.get('enable_translation', False):
+                    session['language'] = selected
+                    session['target_language'] = selected
                 return[
-                    gr.update(value=session['language']),
+                    gr.update(value=selected),
                     update_gr_tts_engine_list(id),
                     update_gr_custom_model_list(id),
                     update_gr_fine_tuned_list(id)
                 ]
             return (gr.update(), gr.update(), gr.update(), gr.update())
+
+        def change_gr_target_language(selected, id):
+            if selected:
+                session = context.get_session(id)
+                session['target_language'] = selected
+                # Target language is used for TTS when translation is enabled
+                if session.get('enable_translation', False):
+                    session['language'] = selected
+            return
+
+        def change_gr_enable_translation(enabled, id):
+            session = context.get_session(id)
+            session['enable_translation'] = enabled
+            # Update session['language'] based on translation state
+            if enabled:
+                session['language'] = session.get('target_language', session.get('source_language', default_language_code))
+            else:
+                session['language'] = session.get('source_language', default_language_code)
+                session['target_language'] = session['language']
+            return
 
         def check_custom_model_tts(custom_model_dir, tts_engine):
             dir_path = None
@@ -4093,9 +4121,19 @@ def web_interface(args, ctx):
 
         # Translation controls
         gr_enable_translation.change(
+            fn=change_gr_enable_translation,
+            inputs=[gr_enable_translation, gr_session],
+            outputs=None
+        ).then(
             fn=lambda enabled: gr.update(visible=enabled),
             inputs=[gr_enable_translation],
             outputs=[gr_target_language]
+        )
+
+        gr_target_language.change(
+            fn=change_gr_target_language,
+            inputs=[gr_target_language, gr_session],
+            outputs=None
         )
 
         gr_tts_engine_list.change(
