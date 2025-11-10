@@ -508,6 +508,35 @@ def get_cover(epubBook, session):
         DependencyError(e)
         return False
 
+def get_normalization_language(session):
+    """
+    Get the appropriate language for text normalization.
+
+    When translation is enabled, text normalization (numbers, dates, etc.)
+    must be done in the SOURCE language because the text hasn't been
+    translated yet at this stage.
+
+    Args:
+        session: Session dictionary containing language settings
+
+    Returns:
+        tuple: (language_code, language_iso1_code)
+
+    Examples:
+        - With translation: French ebook → Returns ('fra', 'fr')
+        - Without translation: English ebook → Returns ('eng', 'en')
+    """
+    if session.get('enable_translation', False):
+        # Use source language for normalization (text not yet translated)
+        lang = session.get('source_language', session.get('language', default_language_code))
+        lang_iso1 = session.get('source_language_iso1', session.get('language_iso1'))
+    else:
+        # No translation: source and target are the same
+        lang = session.get('language', default_language_code)
+        lang_iso1 = session.get('language_iso1')
+
+    return lang, lang_iso1
+
 def get_chapters(epubBook, session):
     try:
         msg = r'''
@@ -550,15 +579,21 @@ YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
             return [], []
         title = get_ebook_title(epubBook, all_docs)
         chapters = []
+
+        # Get the appropriate language for text normalization
+        # This ensures numbers, dates, etc. are normalized in the SOURCE language
+        # before translation (if translation is enabled)
+        normalize_lang, normalize_lang_iso1 = get_normalization_language(session)
+
         stanza_nlp = False
-        if session['language'] in year_to_decades_languages:
-            stanza.download(session['language_iso1'])
-            stanza_nlp = stanza.Pipeline(session['language_iso1'], processors='tokenize,ner')
-        is_num2words_compat = get_num2words_compat(session['language_iso1'])
+        if normalize_lang in year_to_decades_languages:
+            stanza.download(normalize_lang_iso1)
+            stanza_nlp = stanza.Pipeline(normalize_lang_iso1, processors='tokenize,ner')
+        is_num2words_compat = get_num2words_compat(normalize_lang_iso1)
         msg = 'Analyzing numbers, maths signs, dates and time to convert in words...'
         print(msg)
         for doc in all_docs:
-            sentences_list = filter_chapter(doc, session['language'], session['language_iso1'], session['tts_engine'], stanza_nlp, is_num2words_compat, session)
+            sentences_list = filter_chapter(doc, normalize_lang, normalize_lang_iso1, session['tts_engine'], stanza_nlp, is_num2words_compat, session)
             if sentences_list is None:
                 break
             elif len(sentences_list) > 0:
@@ -4031,7 +4066,9 @@ def web_interface(args, ctx):
                                 previous_hash = state['hash']
                                 new_hash = hash_proxy_dict(MappingProxyType(session))
                                 if previous_hash == new_hash:
-                                    return gr.update(), gr.update(), gr.update()
+                                    # Session hasn't changed, no update needed
+                                    # Must return 4 values: gr_write_data, gr_state_update, gr_audiobook_list, gr_tab_progress
+                                    return gr.update(), gr.update(), gr.update(), gr.update()
                                 else:
                                     state['hash'] = new_hash
                                     session_dict = proxy2dict(session)

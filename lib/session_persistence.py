@@ -155,7 +155,8 @@ class SessionPersistence:
                 metadata = {
                     "id": session_id,
                     "status": session_data.get('status', 'ready'),
-                    "ebook_name": os.path.basename(session_data.get('ebook', 'Unknown')),
+                    # Use 'or' to handle None values: if get() returns None, use default
+                    "ebook_name": os.path.basename(session_data.get('ebook') or 'Unknown'),
                     "progress": session_data.get('progress', 0),
                     "tts_engine": session_data.get('tts_engine', 'Unknown'),
                     "voice": os.path.basename(session_data.get('voice', 'Default')) if session_data.get('voice') else 'Default',
