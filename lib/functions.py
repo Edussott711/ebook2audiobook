@@ -553,7 +553,7 @@ YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
         msg = 'Analyzing numbers, maths signs, dates and time to convert in words...'
         print(msg)
         for doc in all_docs:
-            sentences_list = filter_chapter(doc, session['language'], session['language_iso1'], session['tts_engine'], stanza_nlp, is_num2words_compat)
+            sentences_list = filter_chapter(doc, session['language'], session['language_iso1'], session['tts_engine'], stanza_nlp, is_num2words_compat, session)
             if sentences_list is None:
                 break
             elif len(sentences_list) > 0:
@@ -567,7 +567,7 @@ YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
         DependencyError(error)
         return None, None
 
-def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_compat):
+def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_compat, session=None):
 
     def tuple_row(node, last_text_char=None):
         try:
@@ -790,6 +790,36 @@ def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_co
         specialchars_remove_table = str.maketrans({ch: ' ' for ch in specialchars_remove})
         text = text.translate(specialchars_remove_table)
         text = normalize_text(text, lang, lang_iso1, tts_engine)
+
+        # Translation step (if enabled)
+        if session and session.get('enable_translation', False):
+            try:
+                from lib.classes.argos_translator import ArgosTranslator
+
+                source_lang = session.get('source_language_iso1', lang_iso1)
+                target_lang = session.get('target_language_iso1', lang_iso1)
+
+                if source_lang != target_lang:
+                    print(f"🌐 Translating text from {source_lang} to {target_lang}...")
+                    translator = ArgosTranslator()
+                    error, status = translator.start(source_lang, target_lang)
+
+                    if status:
+                        translated_text, success = translator.process(text)
+                        if success:
+                            text = translated_text
+                            # Update language for sentence splitting to use target language
+                            lang = session.get('target_language', lang)
+                            lang_iso1 = target_lang
+                            tts_engine = session.get('tts_engine', tts_engine)
+                            print(f"✅ Translation successful!")
+                        else:
+                            print(f"⚠️ Translation failed: {translated_text}")
+                    else:
+                        print(f"⚠️ Translation initialization failed: {error}")
+            except Exception as e:
+                print(f"⚠️ Translation error: {e}")
+
         # Ensure space before and after punctuation_list
         #pattern_space = re.escape(''.join(punctuation_list))
         #punctuation_pattern_space = r'(?<!\s)([{}])'.format(pattern_space)
@@ -2046,13 +2076,48 @@ def convert_ebook(args, ctx=None):
             id = args['session'] if args['session'] is not None else str(uuid.uuid4())
 
             session = context.get_session(id)
-            session['script_mode'] = args['script_mode'] if args['script_mode'] is not None else NATIVE   
+            session['script_mode'] = args['script_mode'] if args['script_mode'] is not None else NATIVE
             session['ebook'] = args['ebook']
             session['ebook_list'] = args['ebook_list']
             session['device'] = args['device']
-            session['language'] = args['language']
-            session['language_iso1'] = args['language_iso1']
-            session['tts_engine'] = args['tts_engine'] if args['tts_engine'] is not None else get_compatible_tts_engines(args['language'])[0]
+
+            # Handle translation parameters
+            session['enable_translation'] = args.get('enable_translation', False)
+
+            # Source language (the ebook's original language)
+            session['source_language'] = args['language']
+            session['source_language_iso1'] = args['language_iso1']
+
+            # Target language (for TTS, defaults to source language if no translation)
+            if session['enable_translation'] and args.get('target_language'):
+                try:
+                    target_lang = args['target_language']
+                    if len(target_lang) == 2:
+                        lang_array = languages.get(part1=target_lang)
+                        if lang_array:
+                            session['target_language'] = lang_array.part3
+                            session['target_language_iso1'] = lang_array.part1
+                    elif len(target_lang) == 3:
+                        lang_array = languages.get(part3=target_lang)
+                        if lang_array:
+                            session['target_language'] = lang_array.part3
+                            session['target_language_iso1'] = lang_array.part1
+                    else:
+                        session['target_language'] = args['language']
+                        session['target_language_iso1'] = args['language_iso1']
+                except Exception as e:
+                    print(f"⚠️ Error parsing target language: {e}")
+                    session['target_language'] = args['language']
+                    session['target_language_iso1'] = args['language_iso1']
+            else:
+                session['target_language'] = args['language']
+                session['target_language_iso1'] = args['language_iso1']
+
+            # Use target language for TTS and language-related operations
+            session['language'] = session['target_language']
+            session['language_iso1'] = session['target_language_iso1']
+
+            session['tts_engine'] = args['tts_engine'] if args['tts_engine'] is not None else get_compatible_tts_engines(session['language'])[0]
             session['custom_model'] = args['custom_model'] if not is_gui_process or args['custom_model'] is None else os.path.join(session['custom_model_dir'], args['custom_model'])
             session['fine_tuned'] = args['fine_tuned']
             session['voice'] = args['voice']
@@ -2667,7 +2732,10 @@ def web_interface(args, ctx):
                             gr_ebook_file = gr.File(label=src_label_file, elem_id='gr_ebook_file', file_types=ebook_formats, file_count='single', allow_reordering=True, height=140)
                             gr_ebook_mode = gr.Radio(label='', elem_id='gr_ebook_mode', choices=[('File','single'), ('Directory','directory')], value='single', interactive=True)
                         with gr.Group(elem_id='gr_group_language'):
-                            gr_language = gr.Dropdown(label='Language', elem_id='gr_language', choices=language_options, value=default_language_code, type='value', interactive=True)
+                            gr_language = gr.Dropdown(label='Source Language', elem_id='gr_language', choices=language_options, value=default_language_code, type='value', interactive=True)
+                        with gr.Group(elem_id='gr_group_translation'):
+                            gr_enable_translation = gr.Checkbox(label='Enable Translation', elem_id='gr_enable_translation', value=False, interactive=True, info='Translate ebook before TTS')
+                            gr_target_language = gr.Dropdown(label='Target Language (for TTS)', elem_id='gr_target_language', choices=language_options, value=default_language_code, type='value', interactive=True, visible=False)
                         gr_group_voice_file = gr.Group(elem_id='gr_group_voice_file', visible=visible_gr_group_voice_file)
                         with gr_group_voice_file:
                             gr_voice_file = gr.File(label='*Cloning Voice Audio Fiie', elem_id='gr_voice_file', file_types=voice_formats, value=None, height=140)
@@ -3112,9 +3180,13 @@ def web_interface(args, ctx):
                 ### BARK Params
                 session['text_temp'] = session['text_temp'] if session['text_temp'] else default_engine_settings[TTS_ENGINES['BARK']]['text_temp']
                 session['waveform_temp'] = session['waveform_temp'] if session['waveform_temp'] else default_engine_settings[TTS_ENGINES['BARK']]['waveform_temp']
+                ### Translation Params
+                session['enable_translation'] = session.get('enable_translation', False)
+                session['target_language'] = session.get('target_language', session['language'])
                 return (
                     gr.update(value=ebook_data), gr.update(value=session['ebook_mode']), gr.update(value=session['device']),
-                    gr.update(value=session['language']), update_gr_tts_engine_list(id), update_gr_custom_model_list(id),
+                    gr.update(value=session.get('source_language', session['language'])), gr.update(value=session['enable_translation']), gr.update(value=session['target_language'], visible=session['enable_translation']),
+                    update_gr_tts_engine_list(id), update_gr_custom_model_list(id),
                     update_gr_fine_tuned_list(id), gr.update(value=session['output_format']), update_gr_audiobook_list(id), gr.update(value=load_vtt_data(session['audiobook'])),
                     gr.update(value=float(session['temperature'])), gr.update(value=float(session['length_penalty'])), gr.update(value=int(session['num_beams'])),
                     gr.update(value=float(session['repetition_penalty'])), gr.update(value=int(session['top_k'])), gr.update(value=float(session['top_p'])), gr.update(value=float(session['speed'])),
@@ -3124,7 +3196,7 @@ def web_interface(args, ctx):
             except Exception as e:
                 error = f'restore_interface(): {e}'
                 alert_exception(error)
-                outputs = tuple([gr.update() for _ in range(25)])
+                outputs = tuple([gr.update() for _ in range(27)])
                 return outputs
 
         def refresh_interface(id):
@@ -3628,7 +3700,7 @@ def web_interface(args, ctx):
             return
 
         def submit_convert_btn(
-                id, device, ebook_file, tts_engine, language, voice, custom_model, fine_tuned, output_format, temperature,
+                id, device, ebook_file, tts_engine, language, enable_translation, target_language, voice, custom_model, fine_tuned, output_format, temperature,
                 length_penalty, num_beams, repetition_penalty, top_k, top_p, speed, enable_text_splitting, text_temp, waveform_temp,
                 output_split, output_split_hours, scan_chapters
             ):
@@ -3645,6 +3717,8 @@ def web_interface(args, ctx):
                     "audiobooks_dir": session['audiobooks_dir'],
                     "voice": voice,
                     "language": language,
+                    "enable_translation": enable_translation,
+                    "target_language": target_language if enable_translation else None,
                     "custom_model": custom_model,
                     "fine_tuned": fine_tuned,
                     "output_format": output_format,
@@ -4016,6 +4090,14 @@ def web_interface(args, ctx):
             inputs=[gr_session],
             outputs=[gr_voice_list]
         )
+
+        # Translation controls
+        gr_enable_translation.change(
+            fn=lambda enabled: gr.update(visible=enabled),
+            inputs=[gr_enable_translation],
+            outputs=[gr_target_language]
+        )
+
         gr_tts_engine_list.change(
             fn=change_gr_tts_engine_list,
             inputs=[gr_tts_engine_list, gr_session],
@@ -4178,7 +4260,7 @@ def web_interface(args, ctx):
         ).then(
             fn=submit_convert_btn,
             inputs=[
-                gr_session, gr_device, gr_ebook_file, gr_tts_engine_list, gr_language, gr_voice_list,
+                gr_session, gr_device, gr_ebook_file, gr_tts_engine_list, gr_language, gr_enable_translation, gr_target_language, gr_voice_list,
                 gr_custom_model_list, gr_fine_tuned_list, gr_output_format_list,
                 gr_xtts_temperature, gr_xtts_length_penalty, gr_xtts_num_beams, gr_xtts_repetition_penalty, gr_xtts_top_k, gr_xtts_top_p, gr_xtts_speed, gr_xtts_enable_text_splitting,
                 gr_bark_text_temp, gr_bark_waveform_temp, gr_output_split, gr_output_split_hours, gr_scan_chapters_checkbox
@@ -4220,7 +4302,7 @@ def web_interface(args, ctx):
             fn=restore_interface,
             inputs=[gr_session],
             outputs=[
-                gr_ebook_file, gr_ebook_mode, gr_device, gr_language,
+                gr_ebook_file, gr_ebook_mode, gr_device, gr_language, gr_enable_translation, gr_target_language,
                 gr_tts_engine_list, gr_custom_model_list, gr_fine_tuned_list,
                 gr_output_format_list, gr_audiobook_list, gr_audiobook_vtt,
                 gr_xtts_temperature, gr_xtts_length_penalty, gr_xtts_num_beams, gr_xtts_repetition_penalty,
