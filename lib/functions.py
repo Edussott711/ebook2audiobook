@@ -537,6 +537,65 @@ def get_normalization_language(session):
 
     return lang, lang_iso1
 
+def protect_sml_markers(text):
+    """
+    Protect SML (Speech Markup Language) markers from translation.
+
+    SML markers like ‡break‡ and ‡pause‡ are special tokens that control
+    audio generation (silences). They must NOT be translated as they would
+    become normal words that the TTS engine would pronounce.
+
+    This function replaces SML markers with placeholder tokens that translation
+    engines typically don't translate (uppercase with underscores).
+
+    Args:
+        text: Text containing SML markers
+
+    Returns:
+        tuple: (protected_text, marker_map) where marker_map allows restoration
+
+    Example:
+        >>> text = "Hello. ‡break‡ How are you? ‡pause‡ Good."
+        >>> protected, map = protect_sml_markers(text)
+        >>> protected
+        "Hello. ___SMLBREAK___ How are you? ___SMLPAUSE___ Good."
+    """
+    marker_map = {
+        "‡break‡": "___SMLBREAK___",
+        "‡pause‡": "___SMLPAUSE___"
+    }
+
+    protected_text = text
+    for original, placeholder in marker_map.items():
+        protected_text = protected_text.replace(original, placeholder)
+
+    return protected_text, marker_map
+
+def restore_sml_markers(text, marker_map):
+    """
+    Restore SML markers after translation.
+
+    Converts placeholder tokens back to their original SML markers.
+
+    Args:
+        text: Translated text containing placeholders
+        marker_map: Mapping from protect_sml_markers()
+
+    Returns:
+        str: Text with SML markers restored
+
+    Example:
+        >>> text = "Bonjour. ___SMLBREAK___ Comment allez-vous?"
+        >>> marker_map = {"‡break‡": "___SMLBREAK___"}
+        >>> restore_sml_markers(text, marker_map)
+        "Bonjour. ‡break‡ Comment allez-vous?"
+    """
+    restored_text = text
+    for original, placeholder in marker_map.items():
+        restored_text = restored_text.replace(placeholder, original)
+
+    return restored_text
+
 def get_chapters(epubBook, session):
     try:
         msg = r'''
@@ -841,13 +900,21 @@ def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_co
 
                 if source_lang != target_lang:
                     print(f"🌐 Translating text from {source_lang} to {target_lang}...")
+
+                    # CRITICAL: Protect SML markers (‡break‡, ‡pause‡) from translation
+                    # If we don't do this, markers will be translated to normal words
+                    # Example: "‡break‡" → "break" (French) or "break" (English)
+                    # and the TTS engine will pronounce them instead of creating silences
+                    protected_text, marker_map = protect_sml_markers(text)
+
                     translator = ArgosTranslator()
                     error, status = translator.start(source_lang, target_lang)
 
                     if status:
-                        translated_text, success = translator.process(text)
+                        translated_text, success = translator.process(protected_text)
                         if success:
-                            text = translated_text
+                            # Restore SML markers after translation
+                            text = restore_sml_markers(translated_text, marker_map)
                             # Update language for sentence splitting to use target language
                             lang = session.get('target_language', lang)
                             lang_iso1 = target_lang
