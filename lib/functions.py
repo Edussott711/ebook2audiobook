@@ -704,12 +704,16 @@ YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
         is_num2words_compat = get_num2words_compat(normalize_lang_iso1)
         msg = 'Analyzing numbers, maths signs, dates and time to convert in words...'
         print(msg)
-        for doc in all_docs:
+
+        total_docs = len(all_docs)
+        for idx, doc in enumerate(all_docs, 1):
+            print(f"📖 Processing chapter {idx}/{total_docs}...")
             sentences_list = filter_chapter(doc, normalize_lang, normalize_lang_iso1, session['tts_engine'], stanza_nlp, is_num2words_compat, session)
             if sentences_list is None:
                 break
             elif len(sentences_list) > 0:
                 chapters.append(sentences_list)
+                print(f"✅ Chapter {idx}/{total_docs} processed → {len(sentences_list)} sentences extracted")
         if len(chapters) == 0:
             error = 'No chapters found!'
             return None, None
@@ -973,12 +977,21 @@ def filter_chapter(doc, lang, lang_iso1, tts_engine, stanza_nlp, is_num2words_co
                         translated_sentences = []
                         failed_count = 0
                         oversized_count = 0
+                        total_sentences = len(sentences)
 
-                        for i, sentence in enumerate(sentences):
+                        # Show progress every N sentences
+                        progress_interval = max(1, total_sentences // 10)  # Show 10 progress updates
+
+                        for i, sentence in enumerate(sentences, 1):
                             # Skip SML markers - they should never be translated
                             if sentence in [TTS_SML['break'], TTS_SML['pause']]:
                                 translated_sentences.append(sentence)
                                 continue
+
+                            # Show progress
+                            if i % progress_interval == 0 or i == total_sentences:
+                                progress_pct = (i / total_sentences) * 100
+                                print(f"   ⏳ Translating... {i}/{total_sentences} sentences ({progress_pct:.1f}%)")
 
                             # Protect SML markers that might be embedded in the sentence
                             protected_sentence, marker_map = protect_sml_markers(sentence)

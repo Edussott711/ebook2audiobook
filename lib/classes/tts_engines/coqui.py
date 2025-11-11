@@ -47,8 +47,11 @@ class Coqui:
             tts = (loaded_tts.get(self.tts_key) or {}).get('engine', False)
             if not tts:
                 if xtts_builtin_speakers_list is None:
+                    print("📥 Downloading TTS speaker embeddings...")
                     self.speakers_path = hf_hub_download(repo_id=models[TTS_ENGINES['XTTSv2']]['internal']['repo'], filename=default_engine_settings[TTS_ENGINES['XTTSv2']]['files'][4], cache_dir=self.cache_dir)
+                    print("⏳ Loading speaker embeddings into memory...")
                     xtts_builtin_speakers_list = torch.load(self.speakers_path)
+                    print("✅ Speaker embeddings loaded!")
                 if self.session['tts_engine'] == TTS_ENGINES['XTTSv2']:
                     msg = f"Loading TTS {self.session['tts_engine']} model, it takes a while, please be patient..."
                     print(msg)
@@ -66,9 +69,15 @@ class Coqui:
                                 self.speakers_path = hf_hub_download(repo_id=hf_repo, filename=default_engine_settings[TTS_ENGINES['XTTSv2']]['files'][4], cache_dir=self.cache_dir)
                         else:
                             hf_sub = models[self.session['tts_engine']][self.session['fine_tuned']]['sub']
+                        print("📥 Downloading TTS model files (config, checkpoint, vocab)...")
+                        print("   ⏳ Downloading config.json...")
                         config_path = hf_hub_download(repo_id=hf_repo, filename=f"{hf_sub}{models[self.session['tts_engine']][self.session['fine_tuned']]['files'][0]}", cache_dir=self.cache_dir)
+                        print("   ⏳ Downloading model checkpoint (this may take several minutes)...")
                         checkpoint_path = hf_hub_download(repo_id=hf_repo, filename=f"{hf_sub}{models[self.session['tts_engine']][self.session['fine_tuned']]['files'][1]}", cache_dir=self.cache_dir)
+                        print("   ⏳ Downloading vocab.json...")
                         vocab_path = hf_hub_download(repo_id=hf_repo, filename=f"{hf_sub}{models[self.session['tts_engine']][self.session['fine_tuned']]['files'][2]}", cache_dir=self.cache_dir)
+                        print("   ✅ All model files downloaded!")
+                        print("⏳ Loading TTS model into GPU memory (this takes 1-3 minutes)...")
                         tts = self._load_checkpoint(tts_engine=self.session['tts_engine'], key=self.tts_key, checkpoint_path=checkpoint_path, config_path=config_path, vocab_path=vocab_path, device=self.session['device'])
                 elif self.session['tts_engine'] == TTS_ENGINES['BARK']:      
                     if self.session['custom_model'] is not None:
